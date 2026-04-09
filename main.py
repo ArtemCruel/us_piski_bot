@@ -17,8 +17,8 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 
 # --- НАСТРОЙКИ ---
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN") or "8682882436:AAGjx583es0SwLIrVyOQ1-Z_-_tINYdtkI0"
-OPENROUTER_KEY = os.getenv("OPENROUTER_KEY") or "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"
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
+OPENROUTER_KEY = os.getenv("OPENROUTER_KEY", "")
 
 # --- БЕЛЫЙ СПИСОК ПОЛЬЗОВАТЕЛЕЙ (разрешены только эти user_id) ---
 ALLOWED_USERS = [
@@ -29,6 +29,10 @@ ALLOWED_USERS = [
 
 logging.info(f"🔧 TELEGRAM_TOKEN set: {bool(TELEGRAM_TOKEN)}")
 logging.info(f"🔧 OPENROUTER_KEY set: {bool(OPENROUTER_KEY)}")
+
+if not TELEGRAM_TOKEN or not OPENROUTER_KEY:
+    logging.error("❌ Missing TELEGRAM_TOKEN or OPENROUTER_KEY environment variables!")
+    exit(1)
 
 bot = Bot(token=TELEGRAM_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
