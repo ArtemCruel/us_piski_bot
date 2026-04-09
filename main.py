@@ -336,7 +336,8 @@ async def secret_message_start(message: types.Message, state: FSMContext):
     
     # Показываем кнопки для выбора получателя
     builder = ReplyKeyboardBuilder()
-    builder.button(text="👤 Артём")
+    builder.button(text="👤 Тёма")
+    builder.button(text="👨 Артём")
     builder.button(text="👩 Майя")
     builder.button(text="❌ Отмена")
     builder.adjust(2)
@@ -353,7 +354,12 @@ async def select_recipient(message: types.Message, state: FSMContext):
         return
     
     recipient_id = None
-    if message.text == "👤 Артём":
+    recipient_name = None
+    
+    if message.text == "👤 Тёма":
+        recipient_id = 7118929376
+        recipient_name = "Тёма"
+    elif message.text == "👨 Артём":
         recipient_id = 1428288113
         recipient_name = "Артём"
     elif message.text == "👩 Майя":
@@ -361,7 +367,7 @@ async def select_recipient(message: types.Message, state: FSMContext):
         recipient_name = "Майя"
     else:
         # Пользователь ввел что-то неожиданное
-        await message.answer("⚠️ Пожалуйста, выбери кнопку: 'Артём' или 'Майя'")
+        await message.answer("⚠️ Пожалуйста, выбери кнопку: 'Тёма', 'Артём' или 'Майя'")
         return
     
     await state.update_data(recipient=recipient_name, recipient_id=recipient_id)
