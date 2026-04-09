@@ -58,22 +58,72 @@ class MyStates(StatesGroup):
 
 # --- РАБОТА С ДАННЫМИ ---
 def get_data(name):
+    """Получить все данные из JSON файла"""
     try:
         with open(f"{name}.json", "r", encoding="utf-8") as f:
             return json.load(f)
     except FileNotFoundError:
-        return []
+        return {}
     except json.JSONDecodeError:
-        logging.error(f"❌ JSON corrupted in {name}.json, returning empty list")
-        return []
+        logging.error(f"❌ JSON corrupted in {name}.json, returning empty dict")
+        return {}
 
 def save_data(name, data):
+    """Сохранить данные в JSON файл"""
     try:
         with open(f"{name}.json", "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=4)
     except IOError as e:
         logging.error(f"❌ Failed to save {name}.json: {e}")
         raise
+
+def get_user_wishes(user_id):
+    """Получить хотелки конкретного пользователя"""
+    data = get_data("wishlist")
+    return data.get(str(user_id), [])
+
+def get_user_quotes(user_id):
+    """Получить цитаты конкретного пользователя"""
+    data = get_data("quotes")
+    return data.get(str(user_id), [])
+
+def add_wish(user_id, wish_text):
+    """Добавить хотелку пользователю"""
+    data = get_data("wishlist")
+    user_id_str = str(user_id)
+    if user_id_str not in data:
+        data[user_id_str] = []
+    data[user_id_str].append(wish_text)
+    save_data("wishlist", data)
+
+def add_quote(user_id, quote_text):
+    """Добавить цитату пользователю"""
+    data = get_data("quotes")
+    user_id_str = str(user_id)
+    if user_id_str not in data:
+        data[user_id_str] = []
+    data[user_id_str].append(quote_text)
+    save_data("quotes", data)
+
+def delete_wish(user_id, idx):
+    """Удалить хотелку пользователя по индексу"""
+    data = get_data("wishlist")
+    user_id_str = str(user_id)
+    if user_id_str in data and 0 <= idx < len(data[user_id_str]):
+        data[user_id_str].pop(idx)
+        save_data("wishlist", data)
+        return True
+    return False
+
+def delete_quote(user_id, idx):
+    """Удалить цитату пользователя по индексу"""
+    data = get_data("quotes")
+    user_id_str = str(user_id)
+    if user_id_str in data and 0 <= idx < len(data[user_id_str]):
+        data[user_id_str].pop(idx)
+        save_data("quotes", data)
+        return True
+    return False
 
 # --- ГЛАВНОЕ МЕНЮ ---
 def main_menu():
@@ -228,18 +278,18 @@ async def save_wish(message: types.Message, state: FSMContext):
         return
     
     try:
-        data = get_data("wishlist")
         wish_text = message.text.strip()
+        user_id = message.from_user.id
+        user_name = USER_NAMES.get(user_id, "Пользователь")
         
         # Ограничиваем длину
         if len(wish_text) > 500:
             await message.answer("⚠️ Желание слишком длинное (макс 500 символов)")
             return
         
-        data.append(wish_text)
-        save_data("wishlist", data)
+        add_wish(user_id, wish_text)
         await state.clear()
-        await message.answer(f"✅ Добавлено в виш-лист: {wish_text}", reply_markup=main_menu())
+        await message.answer(f"✅ Добавлено в твой виш-лист: {wish_text}", reply_markup=main_menu())
     except Exception as e:
         logging.error(f"❌ Error saving wish: {e}")
         await message.answer(f"❌ Ошибка при сохранении: {e}", reply_markup=main_menu())
@@ -269,18 +319,18 @@ async def save_quote(message: types.Message, state: FSMContext):
         return
     
     try:
-        data = get_data("quotes")
         quote_text = message.text.strip()
+        user_id = message.from_user.id
+        user_name = USER_NAMES.get(user_id, "Пользователь")
         
         # Ограничиваем длину
         if len(quote_text) > 500:
             await message.answer("⚠️ Цитата слишком длинная (макс 500 символов)")
             return
         
-        data.append(quote_text)
-        save_data("quotes", data)
+        add_quote(user_id, quote_text)
         await state.clear()
-        await message.answer("🤣 Ха-ха, сохранил!", reply_markup=main_menu())
+        await message.answer("🤣 Ха-ха, сохранил в твою коллекцию!", reply_markup=main_menu())
     except Exception as e:
         logging.error(f"❌ Error saving quote: {e}")
         await message.answer(f"❌ Ошибка при сохранении: {e}", reply_markup=main_menu())
@@ -418,11 +468,44 @@ async def show_all(message: types.Message):
     logging.info(f"📂 User requested to view lists: {message.from_user.id}")
     if not await check_access(message):
         return
-    wishes = get_data("wishlist")
-    quotes = get_data("quotes")
     
-    text = "🎁 <b>Виш-лист:</b>\n" + ("\n".join([f"{i+1}. {item}" for i, item in enumerate(wishes)]) if wishes else "Пусто")
-    text += "\n\n🤣 <b>Цитаты:</b>\n" + ("\n".join([f"{i+1}. {item}" for i, item in enumerate(quotes)]) if quotes else "Пусто")
+    user_id = message.from_user.id
+    user_name = USER_NAMES.get(user_id, "Пользователь")
+    
+    # Получаем данные для всех пользователей
+    all_wishes = get_data("wishlist")
+    all_quotes = get_data("quotes")
+    
+    # Формируем текст с разделением
+    text = "<b>🎁 ВИШИРЦЫ:</b>\n\n"
+    
+    for uid_str in ALLOWED_USERS:
+        uid_name = USER_NAMES.get(uid_str, "Неизвестный")
+        uid_wishes = all_wishes.get(str(uid_str), [])
+        
+        if uid_wishes:
+            text += f"<b>{uid_name}:</b>\n"
+            for i, wish in enumerate(uid_wishes, 1):
+                text += f"  {i}. {wish}\n"
+            text += "\n"
+    
+    if not any(all_wishes.get(str(uid), []) for uid in ALLOWED_USERS):
+        text += "<i>Все виш-листы пусты</i>\n"
+    
+    text += "\n<b>🤣 ЦИТАТЫ:</b>\n\n"
+    
+    for uid_str in ALLOWED_USERS:
+        uid_name = USER_NAMES.get(uid_str, "Неизвестный")
+        uid_quotes = all_quotes.get(str(uid_str), [])
+        
+        if uid_quotes:
+            text += f"<b>{uid_name}:</b>\n"
+            for i, quote in enumerate(uid_quotes, 1):
+                text += f"  {i}. {quote}\n"
+            text += "\n"
+    
+    if not any(all_quotes.get(str(uid), []) for uid in ALLOWED_USERS):
+        text += "<i>Все цитаты пусты</i>"
     
     logging.info(f"✅ Sending lists to user {message.from_user.id}")
     await message.answer(text, parse_mode="HTML")
@@ -446,9 +529,9 @@ async def show_wishes_to_delete(callback: types.CallbackQuery):
         await callback.answer("❌ Доступ запрещен!", show_alert=True)
         return
     
-    wishes = get_data("wishlist")
+    wishes = get_user_wishes(user_id)
     if not wishes:
-        await callback.answer("Виш-лист пуст!", show_alert=True)
+        await callback.answer("У тебя нет хотелок!", show_alert=True)
         return
     
     builder = InlineKeyboardBuilder()
@@ -459,7 +542,7 @@ async def show_wishes_to_delete(callback: types.CallbackQuery):
     builder.button(text="🔙 Назад", callback_data="cancel_delete")
     builder.adjust(1)
     
-    await callback.message.edit_text("Выбери, что удалить:", reply_markup=builder.as_markup())
+    await callback.message.edit_text("Какую хотелку удалить?", reply_markup=builder.as_markup())
 
 @dp.callback_query(F.data == "delete_quote_menu")
 async def show_quotes_to_delete(callback: types.CallbackQuery):
@@ -468,9 +551,9 @@ async def show_quotes_to_delete(callback: types.CallbackQuery):
         await callback.answer("❌ Доступ запрещен!", show_alert=True)
         return
     
-    quotes = get_data("quotes")
+    quotes = get_user_quotes(user_id)
     if not quotes:
-        await callback.answer("Цитаты пусты!", show_alert=True)
+        await callback.answer("У тебя нет цитат!", show_alert=True)
         return
     
     builder = InlineKeyboardBuilder()
@@ -481,21 +564,28 @@ async def show_quotes_to_delete(callback: types.CallbackQuery):
     builder.button(text="🔙 Назад", callback_data="cancel_delete")
     builder.adjust(1)
     
-    await callback.message.edit_text("Выбери цитату для удаления:", reply_markup=builder.as_markup())
+    await callback.message.edit_text("Какую цитату удалить?", reply_markup=builder.as_markup())
 
 @dp.callback_query(F.data.startswith("del_wish_"))
-async def delete_wish(callback: types.CallbackQuery):
+async def delete_wish_cb(callback: types.CallbackQuery):
     try:
+        user_id = callback.from_user.id
+        if user_id not in ALLOWED_USERS:
+            await callback.answer("❌ Доступ запрещен!", show_alert=True)
+            return
+        
         # Парсим индекс - берем все после последнего underscore
         idx_str = callback.data.rsplit("_", 1)[-1]
         idx = int(idx_str)
-        data = get_data("wishlist")
-        if 0 <= idx < len(data):
-            removed = data.pop(idx)
-            save_data("wishlist", data)
-            await callback.message.edit_text(f"✅ Удалено: {removed}\n\nОставалось: {len(data)} желаний")
+        
+        # Получаем хотелку перед удалением (для сообщения)
+        wishes = get_user_wishes(user_id)
+        if 0 <= idx < len(wishes):
+            removed = wishes[idx]
+            delete_wish(user_id, idx)
+            await callback.message.edit_text(f"✅ Удалено: {removed}\n\nОсталось {len(wishes)-1} хотелок")
         else:
-            await callback.answer("❌ Элемент не найден!", show_alert=True)
+            await callback.answer("❌ Хотелка не найдена!", show_alert=True)
     except ValueError:
         logging.error(f"❌ Invalid callback data format: {callback.data}")
         await callback.answer(f"❌ Ошибка: неверный формат", show_alert=True)
@@ -504,18 +594,25 @@ async def delete_wish(callback: types.CallbackQuery):
         await callback.answer(f"❌ Ошибка: {e}", show_alert=True)
 
 @dp.callback_query(F.data.startswith("del_quote_"))
-async def delete_quote(callback: types.CallbackQuery):
+async def delete_quote_cb(callback: types.CallbackQuery):
     try:
+        user_id = callback.from_user.id
+        if user_id not in ALLOWED_USERS:
+            await callback.answer("❌ Доступ запрещен!", show_alert=True)
+            return
+        
         # Парсим индекс - берем все после последнего underscore
         idx_str = callback.data.rsplit("_", 1)[-1]
         idx = int(idx_str)
-        data = get_data("quotes")
-        if 0 <= idx < len(data):
-            removed = data.pop(idx)
-            save_data("quotes", data)
-            await callback.message.edit_text(f"✅ Удалено: {removed}\n\nОставалось: {len(data)} цитат")
+        
+        # Получаем цитату перед удалением (для сообщения)
+        quotes = get_user_quotes(user_id)
+        if 0 <= idx < len(quotes):
+            removed = quotes[idx]
+            delete_quote(user_id, idx)
+            await callback.message.edit_text(f"✅ Удалено: {removed}\n\nОсталось {len(quotes)-1} цитат")
         else:
-            await callback.answer("❌ Элемент не найден!", show_alert=True)
+            await callback.answer("❌ Цитата не найдена!", show_alert=True)
     except ValueError:
         logging.error(f"❌ Invalid callback data format: {callback.data}")
         await callback.answer(f"❌ Ошибка: неверный формат", show_alert=True)
