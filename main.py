@@ -3,12 +3,16 @@ import json
 import os
 import logging
 import requests
+from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
+
+# Загружаем переменные окружения из .env файла
+load_dotenv()
 
 logging.basicConfig(level=logging.INFO)
 
