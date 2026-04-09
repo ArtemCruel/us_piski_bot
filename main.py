@@ -2,13 +2,13 @@ import asyncio
 import json
 import os
 import logging
+import requests
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
-from openai import OpenAI
 
 logging.basicConfig(level=logging.INFO)
 
@@ -29,14 +29,8 @@ if not TELEGRAM_TOKEN:
 bot = Bot(token=TELEGRAM_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
-ai_client = OpenAI(
-    base_url="https://openrouter.ai/api/v1",
-    api_key=OPENROUTER_KEY,
-    default_headers={
-        "X-Title": "MayaBot", 
-        "HTTP-Referer": "http://localhost"
-    }
-)
+# OpenRouter API configuration
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 class MyStates(StatesGroup):
     waiting_for_wish = State()
@@ -73,11 +67,22 @@ def main_menu():
 async def call_ai(prompt):
     """Вызывает OpenRouter в отдельном потоке."""
     def sync_call():
-        res = ai_client.chat.completions.create(
-            model="google/gemini-2.0-flash-001",
-            messages=[{"role": "user", "content": prompt}]
-        )
-        return res.choices[0].message.content
+        headers = {
+            "Authorization": f"Bearer {OPENROUTER_KEY}",
+            "HTTP-Referer": "http://localhost",
+            "X-Title": "MayaBot"
+        }
+        data = {
+            "model": "google/gemini-2.0-flash-001",
+            "messages": [{"role": "user", "content": prompt}]
+        }
+        try:
+            response = requests.post(OPENROUTER_URL, headers=headers, json=data, timeout=30)
+            response.raise_for_status()
+            return response.json()["choices"][0]["message"]["content"]
+        except Exception as e:
+            logging.error(f"AI error: {e}")
+            return None
     
     try:
         return await asyncio.to_thread(sync_call)
