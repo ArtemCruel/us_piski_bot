@@ -22,14 +22,14 @@ OPENROUTER_KEY = os.getenv("OPENROUTER_KEY", "")
 
 # --- БЕЛЫЙ СПИСОК ПОЛЬЗОВАТЕЛЕЙ (разрешены только эти user_id) ---
 ALLOWED_USERS = [
-    7118929376,     # Artem личный
+    7118929376,     # Artem личный тема
     1428288113,     # Artem основной (@A_rtemK)
     8481047835,     # Майя (@poqqg)
 ]
 
 # Соответствие между user_id и именами
 USER_NAMES = {
-    7118929376: "Артём",
+    7118929376: "Тёма",
     1428288113: "Артём",
     8481047835: "Майя",
 }
@@ -63,6 +63,9 @@ def get_data(name):
             return json.load(f)
     except FileNotFoundError:
         return []
+    except json.JSONDecodeError:
+        logging.error(f"❌ JSON corrupted in {name}.json, returning empty list")
+        return []
 
 def save_data(name, data):
     with open(f"{name}.json", "w", encoding="utf-8") as f:
@@ -75,11 +78,11 @@ def main_menu():
     builder.button(text="🎁 В виш-лист")
     builder.button(text="🤣 В цитаты")
     builder.button(text="🤖 Спросить ИИ")
-    builder.button(text="� Тайное сообщение")
-    builder.button(text="�📂 Посмотреть списки")
+    builder.button(text="💌 Тайное сообщение")
+    builder.button(text="📂 Посмотреть списки")
     builder.button(text="🗑️ Удалить элемент")
     builder.adjust(2)
-    return builder.as_markup(resize_keyboard=True)
+    return builder.as_markup(resize_keyboard=True, one_time_keyboard=False)
 
 # --- АСИНХРОННЫЙ ВЫЗОВ ИИ (не блокирует цикл событий) ---
 async def call_ai(prompt):
@@ -268,28 +271,37 @@ async def select_recipient(message: types.Message, state: FSMContext):
         await message.answer("Отменено ✌️", reply_markup=main_menu())
         return
     
+    recipient_id = None
     if message.text == "👤 Артём":
-        await state.update_data(recipient="Артём", recipient_id=1428288113)
+        recipient_id = 1428288113
+        recipient_name = "Артём"
     elif message.text == "👩 Майя":
-        await state.update_data(recipient="Майя", recipient_id=8481047835)
+        recipient_id = 8481047835
+        recipient_name = "Майя"
     else:
-        await message.answer("Выбери Артёма или Майю!")
+        # Пользователь ввел что-то неожиданное
+        await message.answer("⚠️ Пожалуйста, выбери кнопку: 'Артём' или 'Майя'")
         return
     
+    await state.update_data(recipient=recipient_name, recipient_id=recipient_id)
     await state.set_state(MyStates.waiting_for_secret_message)
-    data = await state.get_data()
-    await message.answer(f"✍️ Напиши тайное сообщение для {data['recipient']}:", reply_markup=types.ReplyKeyboardRemove())
+    await message.answer(f"✍️ Напиши тайное сообщение для {recipient_name}:", reply_markup=types.ReplyKeyboardRemove())
 
 @dp.message(MyStates.waiting_for_secret_message, F.text)
 async def send_secret_message(message: types.Message, state: FSMContext):
-    data = await state.get_data()
-    sender_id = message.from_user.id
-    sender_name = USER_NAMES.get(sender_id, f"Пользователь {sender_id}")
-    recipient_id = data['recipient_id']
-    recipient_name = data['recipient']
-    
-    # Отправляем сообщение получателю
     try:
+        data = await state.get_data()
+        sender_id = message.from_user.id
+        sender_name = USER_NAMES.get(sender_id, f"Пользователь {sender_id}")
+        recipient_id = data.get('recipient_id')
+        recipient_name = data.get('recipient', 'unknown')
+        
+        if not recipient_id:
+            await state.clear()
+            await message.answer("❌ Ошибка: получатель не выбран", reply_markup=main_menu())
+            return
+        
+        # Отправляем сообщение получателю
         await bot.send_message(
             recipient_id,
             f"💌 **Тайное сообщение от {sender_name}:**\n\n_{message.text}_",
@@ -311,13 +323,13 @@ async def show_all(message: types.Message):
     wishes = get_data("wishlist")
     quotes = get_data("quotes")
     
-    text = "🎁 **Виш-лист:**\n" + ("\n".join([f"{i+1}. {item}" for i, item in enumerate(wishes)]) if wishes else "Пусто")
-    text += "\n\n🤣 **Цитаты:**\n" + ("\n".join([f"{i+1}. {item}" for i, item in enumerate(quotes)]) if quotes else "Пусто")
+    text = "🎁 <b>Виш-лист:</b>\n" + ("\n".join([f"{i+1}. {item}" for i, item in enumerate(wishes)]) if wishes else "Пусто")
+    text += "\n\n🤣 <b>Цитаты:</b>\n" + ("\n".join([f"{i+1}. {item}" for i, item in enumerate(quotes)]) if quotes else "Пусто")
     
     logging.info(f"✅ Sending lists to user {message.from_user.id}")
-    await message.answer(text, parse_mode="Markdown")
+    await message.answer(text, parse_mode="HTML")
 
-# 6. УДАЛЕНИЕ
+# 7. УДАЛЕНИЕ
 @dp.message(F.text == "🗑️ Удалить элемент")
 async def delete_menu(message: types.Message):
     if not await check_access(message):
@@ -331,6 +343,11 @@ async def delete_menu(message: types.Message):
 
 @dp.callback_query(F.data == "delete_wish_menu")
 async def show_wishes_to_delete(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    if user_id not in ALLOWED_USERS:
+        await callback.answer("❌ Доступ запрещен!", show_alert=True)
+        return
+    
     wishes = get_data("wishlist")
     if not wishes:
         await callback.answer("Виш-лист пуст!", show_alert=True)
@@ -338,7 +355,9 @@ async def show_wishes_to_delete(callback: types.CallbackQuery):
     
     builder = InlineKeyboardBuilder()
     for i, wish in enumerate(wishes):
-        builder.button(text=f"❌ {wish}", callback_data=f"del_wish_{i}")
+        # Ограничиваем длину текста кнопки для совместимости с Telegram
+        display_text = wish[:40] + "..." if len(wish) > 40 else wish
+        builder.button(text=f"❌ {display_text}", callback_data=f"del_wish_{i}")
     builder.button(text="🔙 Назад", callback_data="cancel_delete")
     builder.adjust(1)
     
@@ -346,6 +365,11 @@ async def show_wishes_to_delete(callback: types.CallbackQuery):
 
 @dp.callback_query(F.data == "delete_quote_menu")
 async def show_quotes_to_delete(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    if user_id not in ALLOWED_USERS:
+        await callback.answer("❌ Доступ запрещен!", show_alert=True)
+        return
+    
     quotes = get_data("quotes")
     if not quotes:
         await callback.answer("Цитаты пусты!", show_alert=True)
@@ -353,7 +377,9 @@ async def show_quotes_to_delete(callback: types.CallbackQuery):
     
     builder = InlineKeyboardBuilder()
     for i, quote in enumerate(quotes):
-        builder.button(text=f"❌ {quote}", callback_data=f"del_quote_{i}")
+        # Ограничиваем длину текста кнопки для совместимости с Telegram
+        display_text = quote[:40] + "..." if len(quote) > 40 else quote
+        builder.button(text=f"❌ {display_text}", callback_data=f"del_quote_{i}")
     builder.button(text="🔙 Назад", callback_data="cancel_delete")
     builder.adjust(1)
     
@@ -361,32 +387,86 @@ async def show_quotes_to_delete(callback: types.CallbackQuery):
 
 @dp.callback_query(F.data.startswith("del_wish_"))
 async def delete_wish(callback: types.CallbackQuery):
-    idx = int(callback.data.split("_")[2])
-    data = get_data("wishlist")
-    if 0 <= idx < len(data):
-        removed = data.pop(idx)
-        save_data("wishlist", data)
-        await callback.message.edit_text(f"✅ Удалено: {removed}\n\nОставалось: {len(data)} желаний")
-    else:
-        await callback.answer("Ошибка индекса!", show_alert=True)
+    try:
+        # Парсим индекс - берем все после последнего underscore
+        idx_str = callback.data.rsplit("_", 1)[-1]
+        idx = int(idx_str)
+        data = get_data("wishlist")
+        if 0 <= idx < len(data):
+            removed = data.pop(idx)
+            save_data("wishlist", data)
+            await callback.message.edit_text(f"✅ Удалено: {removed}\n\nОставалось: {len(data)} желаний")
+        else:
+            await callback.answer("❌ Элемент не найден!", show_alert=True)
+    except ValueError:
+        logging.error(f"❌ Invalid callback data format: {callback.data}")
+        await callback.answer(f"❌ Ошибка: неверный формат", show_alert=True)
+    except Exception as e:
+        logging.error(f"❌ Error deleting wish: {e}")
+        await callback.answer(f"❌ Ошибка: {e}", show_alert=True)
 
 @dp.callback_query(F.data.startswith("del_quote_"))
 async def delete_quote(callback: types.CallbackQuery):
-    idx = int(callback.data.split("_")[2])
-    data = get_data("quotes")
-    if 0 <= idx < len(data):
-        removed = data.pop(idx)
-        save_data("quotes", data)
-        await callback.message.edit_text(f"✅ Удалено: {removed}\n\nОставалось: {len(data)} цитат")
-    else:
-        await callback.answer("Ошибка индекса!", show_alert=True)
+    try:
+        # Парсим индекс - берем все после последнего underscore
+        idx_str = callback.data.rsplit("_", 1)[-1]
+        idx = int(idx_str)
+        data = get_data("quotes")
+        if 0 <= idx < len(data):
+            removed = data.pop(idx)
+            save_data("quotes", data)
+            await callback.message.edit_text(f"✅ Удалено: {removed}\n\nОставалось: {len(data)} цитат")
+        else:
+            await callback.answer("❌ Элемент не найден!", show_alert=True)
+    except ValueError:
+        logging.error(f"❌ Invalid callback data format: {callback.data}")
+        await callback.answer(f"❌ Ошибка: неверный формат", show_alert=True)
+    except Exception as e:
+        logging.error(f"❌ Error deleting quote: {e}")
+        await callback.answer(f"❌ Ошибка: {e}", show_alert=True)
 
 @dp.callback_query(F.data == "cancel_delete")
 async def cancel_delete(callback: types.CallbackQuery):
     await callback.message.edit_text("Отменено ✌️", reply_markup=None)
 
+# --- FALLBACK ОБРАБОТЧИКИ ДЛЯ ЗАБЫТЫХ СОСТОЯНИЙ ---
+@dp.message(MyStates.waiting_for_secret_message)
+async def fallback_secret_message(message: types.Message, state: FSMContext):
+    """Обработчик на случай, если пользователь не нажимает кнопку отмены"""
+    data = await state.get_data()
+    sender_id = message.from_user.id
+    sender_name = USER_NAMES.get(sender_id, f"Пользователь {sender_id}")
+    recipient_id = data.get('recipient_id')
+    recipient_name = data.get('recipient', 'unknown')
+    
+    if not recipient_id:
+        await state.clear()
+        await message.answer("❌ Ошибка: получатель не выбран", reply_markup=main_menu())
+        return
+    
+    try:
+        await bot.send_message(
+            recipient_id,
+            f"💌 **Тайное сообщение от {sender_name}:**\n\n_{message.text}_",
+            parse_mode="Markdown"
+        )
+        await message.answer(f"✅ Сообщение отправлено {recipient_name}!", reply_markup=main_menu())
+    except Exception as e:
+        logging.error(f"❌ Error sending secret message: {e}")
+        await message.answer(f"❌ Ошибка при отправке сообщения: {e}", reply_markup=main_menu())
+    
+    await state.clear()
+
 async def main():
-    await dp.start_polling(bot)
+    logging.info("🚀 Bot starting...")
+    try:
+        await dp.start_polling(bot)
+    except Exception as e:
+        logging.error(f"❌ Bot crashed: {e}")
+        raise
+    finally:
+        await bot.session.close()
+        logging.info("🛑 Bot stopped")
 
 if __name__ == '__main__':
     asyncio.run(main())
