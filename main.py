@@ -470,7 +470,6 @@ async def show_all(message: types.Message):
         return
     
     user_id = message.from_user.id
-    user_name = USER_NAMES.get(user_id, "Пользователь")
     
     # Получаем данные для всех пользователей
     all_wishes = get_data("wishlist")
@@ -479,32 +478,38 @@ async def show_all(message: types.Message):
     # Формируем текст с разделением
     text = "<b>🎁 ВИШИРЦЫ:</b>\n\n"
     
-    for uid_str in ALLOWED_USERS:
-        uid_name = USER_NAMES.get(uid_str, "Неизвестный")
-        uid_wishes = all_wishes.get(str(uid_str), [])
+    wishes_empty = True
+    for uid in ALLOWED_USERS:
+        uid_str = str(uid)
+        uid_name = USER_NAMES.get(uid, "Неизвестный")
+        uid_wishes = all_wishes.get(uid_str, [])
         
         if uid_wishes:
+            wishes_empty = False
             text += f"<b>{uid_name}:</b>\n"
             for i, wish in enumerate(uid_wishes, 1):
                 text += f"  {i}. {wish}\n"
             text += "\n"
     
-    if not any(all_wishes.get(str(uid), []) for uid in ALLOWED_USERS):
+    if wishes_empty:
         text += "<i>Все виш-листы пусты</i>\n"
     
     text += "\n<b>🤣 ЦИТАТЫ:</b>\n\n"
     
-    for uid_str in ALLOWED_USERS:
-        uid_name = USER_NAMES.get(uid_str, "Неизвестный")
-        uid_quotes = all_quotes.get(str(uid_str), [])
+    quotes_empty = True
+    for uid in ALLOWED_USERS:
+        uid_str = str(uid)
+        uid_name = USER_NAMES.get(uid, "Неизвестный")
+        uid_quotes = all_quotes.get(uid_str, [])
         
         if uid_quotes:
+            quotes_empty = False
             text += f"<b>{uid_name}:</b>\n"
             for i, quote in enumerate(uid_quotes, 1):
                 text += f"  {i}. {quote}\n"
             text += "\n"
     
-    if not any(all_quotes.get(str(uid), []) for uid in ALLOWED_USERS):
+    if quotes_empty:
         text += "<i>Все цитаты пусты</i>"
     
     logging.info(f"✅ Sending lists to user {message.from_user.id}")
