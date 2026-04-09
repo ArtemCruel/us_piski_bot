@@ -68,8 +68,12 @@ def get_data(name):
         return []
 
 def save_data(name, data):
-    with open(f"{name}.json", "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=4)
+    try:
+        with open(f"{name}.json", "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=4)
+    except IOError as e:
+        logging.error(f"❌ Failed to save {name}.json: {e}")
+        raise
 
 # --- ГЛАВНОЕ МЕНЮ ---
 def main_menu():
@@ -148,6 +152,33 @@ async def cmd_start(message: types.Message, state: FSMContext):
     await state.clear()
     await message.answer("Бот запущен! Что хочешь сделать?", reply_markup=main_menu())
 
+@dp.message(Command("help"))
+async def cmd_help(message: types.Message):
+    if not await check_access(message):
+        return
+    help_text = """
+📚 <b>Доступные команды:</b>
+
+✨ <b>Факт про Майю</b> - случайный позитивный факт
+🎁 <b>В виш-лист</b> - добавить желание
+🤣 <b>В цитаты</b> - сохранить интересную цитату
+🤖 <b>Спросить ИИ</b> - спросить что-нибудь у ИИ
+💌 <b>Тайное сообщение</b> - отправить скрытое сообщение
+📂 <b>Посмотреть списки</b> - показать все желания и цитаты
+🗑️ <b>Удалить элемент</b> - удалить желание или цитату
+
+/start - главное меню
+/help - эта справка
+"""
+    await message.answer(help_text, parse_mode="HTML")
+
+@dp.message(Command("menu"))
+async def cmd_menu(message: types.Message, state: FSMContext):
+    if not await check_access(message):
+        return
+    await state.clear()
+    await message.answer("Вернулся в главное меню!", reply_markup=main_menu())
+
 # 1. ФАКТ
 @dp.message(F.text == "✨ Факт про Майю")
 async def get_fact(message: types.Message):
@@ -166,6 +197,9 @@ async def get_fact(message: types.Message):
 Напиши один факт без предисловий:"""
     text = await call_ai(prompt)
     if text:
+        # Обрезаем если очень длинный
+        if len(text) > 1000:
+            text = text[:1000] + "..."
         await message.answer(text)
     else:
         await message.answer("❌ Ошибка ИИ. Проверь баланс/ключ на OpenRouter.")
@@ -188,11 +222,28 @@ async def cancel_wish(message: types.Message, state: FSMContext):
 
 @dp.message(MyStates.waiting_for_wish, F.text)
 async def save_wish(message: types.Message, state: FSMContext):
-    data = get_data("wishlist")
-    data.append(message.text)
-    save_data("wishlist", data)
-    await state.clear()
-    await message.answer(f"✅ Добавлено в виш-лист: {message.text}", reply_markup=main_menu())
+    # Проверяем, что текст не пустой
+    if not message.text or not message.text.strip():
+        await message.answer("⚠️ Желание не может быть пустым!")
+        return
+    
+    try:
+        data = get_data("wishlist")
+        wish_text = message.text.strip()
+        
+        # Ограничиваем длину
+        if len(wish_text) > 500:
+            await message.answer("⚠️ Желание слишком длинное (макс 500 символов)")
+            return
+        
+        data.append(wish_text)
+        save_data("wishlist", data)
+        await state.clear()
+        await message.answer(f"✅ Добавлено в виш-лист: {wish_text}", reply_markup=main_menu())
+    except Exception as e:
+        logging.error(f"❌ Error saving wish: {e}")
+        await message.answer(f"❌ Ошибка при сохранении: {e}", reply_markup=main_menu())
+        await state.clear()
 
 # 3. ЦИТАТЫ
 @dp.message(F.text == "🤣 В цитаты")
@@ -212,11 +263,28 @@ async def cancel_quote(message: types.Message, state: FSMContext):
 
 @dp.message(MyStates.waiting_for_quote, F.text)
 async def save_quote(message: types.Message, state: FSMContext):
-    data = get_data("quotes")
-    data.append(message.text)
-    save_data("quotes", data)
-    await state.clear()
-    await message.answer("🤣 Ха-ха, сохранил!", reply_markup=main_menu())
+    # Проверяем, что текст не пустой
+    if not message.text or not message.text.strip():
+        await message.answer("⚠️ Цитата не может быть пустой!")
+        return
+    
+    try:
+        data = get_data("quotes")
+        quote_text = message.text.strip()
+        
+        # Ограничиваем длину
+        if len(quote_text) > 500:
+            await message.answer("⚠️ Цитата слишком длинная (макс 500 символов)")
+            return
+        
+        data.append(quote_text)
+        save_data("quotes", data)
+        await state.clear()
+        await message.answer("🤣 Ха-ха, сохранил!", reply_markup=main_menu())
+    except Exception as e:
+        logging.error(f"❌ Error saving quote: {e}")
+        await message.answer(f"❌ Ошибка при сохранении: {e}", reply_markup=main_menu())
+        await state.clear()
 
 # 4. ИИ АССИСТЕНТ
 def ai_menu():
@@ -239,12 +307,25 @@ async def ai_end(message: types.Message, state: FSMContext):
 
 @dp.message(MyStates.waiting_for_ai, F.text)
 async def ai_answer(message: types.Message, state: FSMContext):
+    # Проверяем, что текст не пустой
+    if not message.text or not message.text.strip():
+        await message.answer("⚠️ Вопрос не может быть пустым!", reply_markup=ai_menu())
+        return
+    
+    # Ограничиваем длину вопроса
+    if len(message.text) > 2000:
+        await message.answer("⚠️ Вопрос слишком длинный (макс 2000 символов)", reply_markup=ai_menu())
+        return
+    
     await message.answer("⏳ Думаю...")
     text = await call_ai(message.text)
     if text:
+        # Ограничиваем длину ответа для читаемости
+        if len(text) > 3000:
+            text = text[:3000] + "\n\n... (ответ обрезан)"
         await message.answer(text, reply_markup=ai_menu())
     else:
-        await message.answer("❌ Ошибка ИИ при обработке запроса.", reply_markup=ai_menu())
+        await message.answer("❌ Ошибка ИИ при обработке запроса. Проверь API ключ/баланс.", reply_markup=ai_menu())
 
 # 5. ТАЙНЫЕ СООБЩЕНИЯ ОТ МАЙИ
 @dp.message(F.text == "💌 Тайное сообщение")
@@ -290,6 +371,11 @@ async def select_recipient(message: types.Message, state: FSMContext):
 @dp.message(MyStates.waiting_for_secret_message, F.text)
 async def send_secret_message(message: types.Message, state: FSMContext):
     try:
+        # Проверяем, что сообщение не пустое
+        if not message.text or not message.text.strip():
+            await message.answer("⚠️ Сообщение не может быть пустым!")
+            return
+        
         data = await state.get_data()
         sender_id = message.from_user.id
         sender_name = USER_NAMES.get(sender_id, f"Пользователь {sender_id}")
@@ -301,11 +387,17 @@ async def send_secret_message(message: types.Message, state: FSMContext):
             await message.answer("❌ Ошибка: получатель не выбран", reply_markup=main_menu())
             return
         
-        # Отправляем сообщение получателю
+        # Ограничиваем длину сообщения
+        message_text = message.text.strip()
+        if len(message_text) > 2000:
+            await message.answer("⚠️ Сообщение слишком длинное (макс 2000 символов)")
+            return
+        
+        # Отправляем сообщение получателю (используем HTML вместо Markdown)
         await bot.send_message(
             recipient_id,
-            f"💌 **Тайное сообщение от {sender_name}:**\n\n_{message.text}_",
-            parse_mode="Markdown"
+            f"💌 <b>Тайное сообщение от {sender_name}:</b>\n\n<i>{message_text}</i>",
+            parse_mode="HTML"
         )
         await message.answer(f"✅ Сообщение отправлено {recipient_name}!", reply_markup=main_menu())
     except Exception as e:
@@ -427,35 +519,68 @@ async def delete_quote(callback: types.CallbackQuery):
 
 @dp.callback_query(F.data == "cancel_delete")
 async def cancel_delete(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    if user_id not in ALLOWED_USERS:
+        await callback.answer("❌ Доступ запрещен!", show_alert=True)
+        return
     await callback.message.edit_text("Отменено ✌️", reply_markup=None)
 
 # --- FALLBACK ОБРАБОТЧИКИ ДЛЯ ЗАБЫТЫХ СОСТОЯНИЙ ---
 @dp.message(MyStates.waiting_for_secret_message)
 async def fallback_secret_message(message: types.Message, state: FSMContext):
-    """Обработчик на случай, если пользователь не нажимает кнопку отмены"""
-    data = await state.get_data()
-    sender_id = message.from_user.id
-    sender_name = USER_NAMES.get(sender_id, f"Пользователь {sender_id}")
-    recipient_id = data.get('recipient_id')
-    recipient_name = data.get('recipient', 'unknown')
-    
-    if not recipient_id:
-        await state.clear()
-        await message.answer("❌ Ошибка: получатель не выбран", reply_markup=main_menu())
+    """Дублируем основной обработчик отправки сообщений"""
+    # Проверяем, что сообщение не пустое
+    if not message.text or not message.text.strip():
+        await message.answer("⚠️ Сообщение не может быть пустым!")
         return
     
     try:
+        data = await state.get_data()
+        sender_id = message.from_user.id
+        sender_name = USER_NAMES.get(sender_id, f"Пользователь {sender_id}")
+        recipient_id = data.get('recipient_id')
+        recipient_name = data.get('recipient', 'unknown')
+        
+        if not recipient_id:
+            await state.clear()
+            await message.answer("❌ Ошибка: получатель не выбран", reply_markup=main_menu())
+            return
+        
+        # Ограничиваем длину сообщения
+        message_text = message.text.strip()
+        if len(message_text) > 2000:
+            await message.answer("⚠️ Сообщение слишком длинное (макс 2000 символов)")
+            return
+        
         await bot.send_message(
             recipient_id,
-            f"💌 **Тайное сообщение от {sender_name}:**\n\n_{message.text}_",
-            parse_mode="Markdown"
+            f"💌 <b>Тайное сообщение от {sender_name}:</b>\n\n<i>{message_text}</i>",
+            parse_mode="HTML"
         )
         await message.answer(f"✅ Сообщение отправлено {recipient_name}!", reply_markup=main_menu())
     except Exception as e:
-        logging.error(f"❌ Error sending secret message: {e}")
+        logging.error(f"❌ Error sending secret message (fallback): {e}")
         await message.answer(f"❌ Ошибка при отправке сообщения: {e}", reply_markup=main_menu())
     
     await state.clear()
+
+# --- ОБРАБОТЧИК ДЛЯ НЕИЗВЕСТНЫХ КОМАНД И СООБЩЕНИЙ ---
+@dp.message()
+async def unknown_message(message: types.Message, state: FSMContext):
+    """Обработчик для всех остальных сообщений"""
+    current_state = await state.get_state()
+    
+    # Если пользователь не в состоянии, то это неизвестная команда
+    if current_state is None:
+        await message.answer("❌ Неизвестная команда. Нажми /start для начала.", reply_markup=main_menu())
+    # Если в состоянии ввода wish
+    elif current_state == MyStates.waiting_for_wish.state:
+        # Уже обработано выше, это fallback
+        pass
+    # Если в состоянии ввода quote
+    elif current_state == MyStates.waiting_for_quote.state:
+        # Уже обработано выше, это fallback
+        pass
 
 async def main():
     logging.info("🚀 Bot starting...")
