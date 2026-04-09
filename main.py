@@ -27,6 +27,13 @@ ALLOWED_USERS = [
     8481047835,     # Майя (@poqqg)
 ]
 
+# Соответствие между user_id и именами
+USER_NAMES = {
+    7118929376: "Артём",
+    1428288113: "Артём",
+    8481047835: "Майя",
+}
+
 logging.info(f"🔧 TELEGRAM_TOKEN set: {bool(TELEGRAM_TOKEN)}")
 logging.info(f"🔧 OPENROUTER_KEY set: {bool(OPENROUTER_KEY)}")
 
@@ -46,6 +53,8 @@ class MyStates(StatesGroup):
     waiting_for_ai = State()
     deleting_wish = State()
     deleting_quote = State()
+    selecting_message_recipient = State()
+    waiting_for_secret_message = State()
 
 # --- РАБОТА С ДАННЫМИ ---
 def get_data(name):
@@ -66,7 +75,8 @@ def main_menu():
     builder.button(text="🎁 В виш-лист")
     builder.button(text="🤣 В цитаты")
     builder.button(text="🤖 Спросить ИИ")
-    builder.button(text="📂 Посмотреть списки")
+    builder.button(text="� Тайное сообщение")
+    builder.button(text="�📂 Посмотреть списки")
     builder.button(text="🗑️ Удалить элемент")
     builder.adjust(2)
     return builder.as_markup(resize_keyboard=True)
@@ -217,7 +227,64 @@ async def ai_answer(message: types.Message, state: FSMContext):
     else:
         await message.answer("❌ Ошибка ИИ при обработке запроса.", reply_markup=ai_menu())
 
-# 5. ПРОСМОТР СПИСКОВ
+# 5. ТАЙНЫЕ СООБЩЕНИЯ ОТ МАЙИ
+@dp.message(F.text == "💌 Тайное сообщение")
+async def secret_message_start(message: types.Message, state: FSMContext):
+    if not await check_access(message):
+        return
+    
+    # Показываем кнопки для выбора получателя
+    builder = ReplyKeyboardBuilder()
+    builder.button(text="👤 Артём")
+    builder.button(text="👩 Майя")
+    builder.button(text="❌ Отмена")
+    builder.adjust(2)
+    
+    await state.set_state(MyStates.selecting_message_recipient)
+    await message.answer("💌 Кому отправить сообщение?", reply_markup=builder.as_markup())
+
+@dp.message(MyStates.selecting_message_recipient, F.text)
+async def select_recipient(message: types.Message, state: FSMContext):
+    if message.text == "❌ Отмена":
+        await state.clear()
+        await message.answer("Отменено ✌️", reply_markup=main_menu())
+        return
+    
+    if message.text == "👤 Артём":
+        await state.update_data(recipient="Артём", recipient_id=1428288113)
+    elif message.text == "👩 Майя":
+        await state.update_data(recipient="Майя", recipient_id=8481047835)
+    else:
+        await message.answer("Выбери Артёма или Майю!")
+        return
+    
+    await state.set_state(MyStates.waiting_for_secret_message)
+    data = await state.get_data()
+    await message.answer(f"✍️ Напиши тайное сообщение для {data['recipient']}:", reply_markup=types.ReplyKeyboardRemove())
+
+@dp.message(MyStates.waiting_for_secret_message, F.text)
+async def send_secret_message(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    sender_id = message.from_user.id
+    sender_name = USER_NAMES.get(sender_id, f"Пользователь {sender_id}")
+    recipient_id = data['recipient_id']
+    recipient_name = data['recipient']
+    
+    # Отправляем сообщение получателю
+    try:
+        await bot.send_message(
+            recipient_id,
+            f"💌 **Тайное сообщение от {sender_name}:**\n\n_{message.text}_",
+            parse_mode="Markdown"
+        )
+        await message.answer(f"✅ Сообщение отправлено {recipient_name}!", reply_markup=main_menu())
+    except Exception as e:
+        logging.error(f"❌ Error sending secret message: {e}")
+        await message.answer(f"❌ Ошибка при отправке сообщения: {e}", reply_markup=main_menu())
+    
+    await state.clear()
+
+# 6. ПРОСМОТР СПИСКОВ
 @dp.message(F.text == "📂 Посмотреть списки")
 async def show_all(message: types.Message):
     if not await check_access(message):
