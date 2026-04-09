@@ -14,7 +14,7 @@ logging.basicConfig(level=logging.INFO)
 
 # --- НАСТРОЙКИ ---
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")  # Используй переменную окружения!
-OPENROUTER_KEY = os.getenv("OPENROUTER_KEY", "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")
+OPENROUTER_KEY = os.getenv("OPENROUTER_KEY", "")
 
 # --- БЕЛЫЙ СПИСОК ПОЛЬЗОВАТЕЛЕЙ (разрешены только эти user_id) ---
 ALLOWED_USERS = [
@@ -23,8 +23,8 @@ ALLOWED_USERS = [
     8481047835,     # Майя (@poqqg)
 ]
 
-if not TELEGRAM_TOKEN:
-    raise ValueError("❌ TELEGRAM_TOKEN не установлен! Экспортируй: export TELEGRAM_TOKEN='твой_токен'")
+logging.info(f"🔧 TELEGRAM_TOKEN set: {bool(TELEGRAM_TOKEN)}")
+logging.info(f"🔧 OPENROUTER_KEY set: {bool(OPENROUTER_KEY)}")
 
 bot = Bot(token=TELEGRAM_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
