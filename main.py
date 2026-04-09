@@ -81,17 +81,28 @@ async def call_ai(prompt):
             "messages": [{"role": "user", "content": prompt}]
         }
         try:
+            logging.info(f"📤 Sending request to OpenRouter...")
             response = requests.post(OPENROUTER_URL, headers=headers, json=data, timeout=30)
-            response.raise_for_status()
-            return response.json()["choices"][0]["message"]["content"]
+            logging.info(f"📥 Response status: {response.status_code}")
+            
+            if response.status_code != 200:
+                logging.error(f"❌ OpenRouter error {response.status_code}: {response.text}")
+                return None
+            
+            result = response.json()
+            if "choices" not in result:
+                logging.error(f"❌ Unexpected response format: {result}")
+                return None
+                
+            return result["choices"][0]["message"]["content"]
         except Exception as e:
-            logging.error(f"AI error: {e}")
+            logging.error(f"❌ AI error: {type(e).__name__}: {e}")
             return None
     
     try:
         return await asyncio.to_thread(sync_call)
     except Exception as e:
-        logging.error(f"AI error: {e}")
+        logging.error(f"❌ AI thread error: {e}")
         return None
 
 # --- ПРОВЕРКА ДОСТУПА ---
