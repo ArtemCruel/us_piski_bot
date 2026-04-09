@@ -687,7 +687,7 @@ async def unknown_message(message: types.Message, state: FSMContext):
         pass
 
 async def main():
-    logging.info("🚀 Bot starting...")
+    logging.info("🚀 Bot starting... (v2.1 - fixed error messages)")
     try:
         await dp.start_polling(bot)
     except Exception as e:
