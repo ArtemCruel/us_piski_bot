@@ -18,7 +18,7 @@ logging.basicConfig(level=logging.INFO)
 
 # --- НАСТРОЙКИ ---
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN") or "8682882436:AAGjx583es0SwLIrVyOQ1-Z_-_tINYdtkI0"
-OPENROUTER_KEY = os.getenv("OPENROUTER_KEY") or "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"
+OPENROUTER_KEY = os.getenv("OPENROUTER_KEY") or "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"
 
 # --- БЕЛЫЙ СПИСОК ПОЛЬЗОВАТЕЛЕЙ (разрешены только эти user_id) ---
 ALLOWED_USERS = [
