@@ -172,8 +172,16 @@ async def get_fact(message: types.Message):
 async def add_wish_start(message: types.Message, state: FSMContext):
     if not await check_access(message):
         return
+    builder = ReplyKeyboardBuilder()
+    builder.button(text="❌ Отмена")
+    builder.adjust(1)
     await state.set_state(MyStates.waiting_for_wish)
-    await message.answer("Пиши свою хотелку, я её сразу запишу!")
+    await message.answer("Пиши свою хотелку (или нажми 'Отмена'):", reply_markup=builder.as_markup())
+
+@dp.message(MyStates.waiting_for_wish, F.text == "❌ Отмена")
+async def cancel_wish(message: types.Message, state: FSMContext):
+    await state.clear()
+    await message.answer("Отменено ✌️", reply_markup=main_menu())
 
 @dp.message(MyStates.waiting_for_wish, F.text)
 async def save_wish(message: types.Message, state: FSMContext):
@@ -188,8 +196,16 @@ async def save_wish(message: types.Message, state: FSMContext):
 async def add_quote_start(message: types.Message, state: FSMContext):
     if not await check_access(message):
         return
+    builder = ReplyKeyboardBuilder()
+    builder.button(text="❌ Отмена")
+    builder.adjust(1)
     await state.set_state(MyStates.waiting_for_quote)
-    await message.answer("Какую фразу сохраним для истории?")
+    await message.answer("Какую фразу сохраним для истории? (или нажми 'Отмена'):", reply_markup=builder.as_markup())
+
+@dp.message(MyStates.waiting_for_quote, F.text == "❌ Отмена")
+async def cancel_quote(message: types.Message, state: FSMContext):
+    await state.clear()
+    await message.answer("Отменено ✌️", reply_markup=main_menu())
 
 @dp.message(MyStates.waiting_for_quote, F.text)
 async def save_quote(message: types.Message, state: FSMContext):
@@ -230,6 +246,7 @@ async def ai_answer(message: types.Message, state: FSMContext):
 # 5. ТАЙНЫЕ СООБЩЕНИЯ ОТ МАЙИ
 @dp.message(F.text == "💌 Тайное сообщение")
 async def secret_message_start(message: types.Message, state: FSMContext):
+    logging.info(f"💌 User requested secret message: {message.from_user.id}")
     if not await check_access(message):
         return
     
@@ -241,6 +258,7 @@ async def secret_message_start(message: types.Message, state: FSMContext):
     builder.adjust(2)
     
     await state.set_state(MyStates.selecting_message_recipient)
+    logging.info(f"✅ Showing recipient selection to user {message.from_user.id}")
     await message.answer("💌 Кому отправить сообщение?", reply_markup=builder.as_markup())
 
 @dp.message(MyStates.selecting_message_recipient, F.text)
@@ -287,6 +305,7 @@ async def send_secret_message(message: types.Message, state: FSMContext):
 # 6. ПРОСМОТР СПИСКОВ
 @dp.message(F.text == "📂 Посмотреть списки")
 async def show_all(message: types.Message):
+    logging.info(f"📂 User requested to view lists: {message.from_user.id}")
     if not await check_access(message):
         return
     wishes = get_data("wishlist")
@@ -295,6 +314,7 @@ async def show_all(message: types.Message):
     text = "🎁 **Виш-лист:**\n" + ("\n".join([f"{i+1}. {item}" for i, item in enumerate(wishes)]) if wishes else "Пусто")
     text += "\n\n🤣 **Цитаты:**\n" + ("\n".join([f"{i+1}. {item}" for i, item in enumerate(quotes)]) if quotes else "Пусто")
     
+    logging.info(f"✅ Sending lists to user {message.from_user.id}")
     await message.answer(text, parse_mode="Markdown")
 
 # 6. УДАЛЕНИЕ
