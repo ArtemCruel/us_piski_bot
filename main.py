@@ -17,8 +17,8 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 
 # --- НАСТРОЙКИ ---
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")  # Используй переменную окружения!
-OPENROUTER_KEY = os.getenv("OPENROUTER_KEY", "")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN") or "8682882436:AAGjx583es0SwLIrVyOQ1-Z_-_tINYdtkI0"
+OPENROUTER_KEY = os.getenv("OPENROUTER_KEY") or "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"
 
 # --- БЕЛЫЙ СПИСОК ПОЛЬЗОВАТЕЛЕЙ (разрешены только эти user_id) ---
 ALLOWED_USERS = [
