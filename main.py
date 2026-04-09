@@ -252,7 +252,7 @@ async def get_fact(message: types.Message):
             text = text[:1000] + "..."
         await message.answer(text)
     else:
-        await message.answer("❌ Ошибка ИИ. Проверь баланс/ключ на OpenRouter.")
+        await message.answer("❌ Ошибка")
 
 # 2. ВИШ-ЛИСТ
 @dp.message(F.text == "🎁 В виш-лист")
@@ -375,7 +375,7 @@ async def ai_answer(message: types.Message, state: FSMContext):
             text = text[:3000] + "\n\n... (ответ обрезан)"
         await message.answer(text, reply_markup=ai_menu())
     else:
-        await message.answer("❌ Ошибка ИИ при обработке запроса. Проверь API ключ/баланс.", reply_markup=ai_menu())
+        await message.answer("❌ Ошибка", reply_markup=ai_menu())
 
 # 5. ТАЙНЫЕ СООБЩЕНИЯ ОТ МАЙИ
 @dp.message(F.text == "💌 Тайное сообщение")
@@ -384,10 +384,9 @@ async def secret_message_start(message: types.Message, state: FSMContext):
     if not await check_access(message):
         return
     
-    # Показываем кнопки для выбора получателя
+    # Показываем кнопки для выбора получателя (только Тёма и Майя)
     builder = ReplyKeyboardBuilder()
     builder.button(text="👤 Тёма")
-    builder.button(text="👨 Артём")
     builder.button(text="👩 Майя")
     builder.button(text="❌ Отмена")
     builder.adjust(2)
@@ -409,15 +408,12 @@ async def select_recipient(message: types.Message, state: FSMContext):
     if message.text == "👤 Тёма":
         recipient_id = 7118929376
         recipient_name = "Тёма"
-    elif message.text == "👨 Артём":
-        recipient_id = 1428288113
-        recipient_name = "Артём"
-    elif message.text == "👩 Майя":
+    elif message.text == " Майя":
         recipient_id = 8481047835
         recipient_name = "Майя"
     else:
         # Пользователь ввел что-то неожиданное
-        await message.answer("⚠️ Пожалуйста, выбери кнопку: 'Тёма', 'Артём' или 'Майя'")
+        await message.answer("⚠️ Пожалуйста, выбери кнопку: 'Тёма' или 'Майя'")
         return
     
     await state.update_data(recipient=recipient_name, recipient_id=recipient_id)
