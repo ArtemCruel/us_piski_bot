@@ -3,6 +3,7 @@ import json
 import os
 import logging
 import requests
+from datetime import datetime
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
@@ -55,6 +56,8 @@ class MyStates(StatesGroup):
     deleting_quote = State()
     selecting_message_recipient = State()
     waiting_for_secret_message = State()
+    setting_relationship_date = State()
+    adding_memory = State()
 
 # --- РАБОТА С ДАННЫМИ ---
 def get_data(name):
@@ -125,6 +128,88 @@ def delete_quote(user_id, idx):
         return True
     return False
 
+def get_relationship_date():
+    """Получить дату начала отношений"""
+    try:
+        with open("relationship.json", "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return data.get("start_date")
+    except FileNotFoundError:
+        return None
+    except json.JSONDecodeError:
+        logging.error("❌ JSON corrupted in relationship.json")
+        return None
+
+def set_relationship_date(date_str):
+    """Установить дату начала отношений (формат: YYYY-MM-DD)"""
+    try:
+        datetime.strptime(date_str, "%Y-%m-%d")
+        data = {"start_date": date_str}
+        with open("relationship.json", "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=4)
+        return True
+    except ValueError:
+        return False
+    except IOError as e:
+        logging.error(f"❌ Failed to save relationship.json: {e}")
+        return False
+
+def calculate_relationship_stats():
+    """Вычислить статистику отношений"""
+    start_date_str = get_relationship_date()
+    if not start_date_str:
+        return None
+    
+    try:
+        start_date = datetime.strptime(start_date_str, "%Y-%m-%d")
+        today = datetime.now()
+        days_together = (today - start_date).days
+        
+        months = days_together // 30
+        remaining_days = days_together % 30
+        
+        return {
+            "days": days_together,
+            "months": months,
+            "days_in_month": remaining_days,
+            "start_date": start_date_str,
+            "formatted_date": start_date.strftime("%d.%m.%y")
+        }
+    except ValueError:
+        return None
+
+def add_memory(memory_text):
+    """Добавить воспоминание"""
+    try:
+        data = get_data("memories")
+        if "memories_list" not in data:
+            data["memories_list"] = []
+        
+        memory_entry = {
+            "text": memory_text,
+            "date": datetime.now().strftime("%d.%m.%y %H:%M")
+        }
+        data["memories_list"].append(memory_entry)
+        save_data("memories", data)
+        return True
+    except Exception as e:
+        logging.error(f"❌ Error saving memory: {e}")
+        return False
+
+def get_memories():
+    """Получить все воспоминания"""
+    data = get_data("memories")
+    return data.get("memories_list", [])
+
+def delete_memory(idx):
+    """Удалить воспоминание по индексу"""
+    data = get_data("memories")
+    if "memories_list" in data and 0 <= idx < len(data["memories_list"]):
+        data["memories_list"].pop(idx)
+        save_data("memories", data)
+        return True
+    return False
+
 # --- ГЛАВНОЕ МЕНЮ ---
 def main_menu():
     builder = ReplyKeyboardBuilder()
@@ -134,7 +219,9 @@ def main_menu():
     builder.button(text="🤖 Спросить ИИ")
     builder.button(text="💌 Тайное сообщение")
     builder.button(text="📂 Посмотреть списки")
-    builder.button(text="🗑️ Удалить элемент")
+    builder.button(text="� Отношения")
+    builder.button(text="📸 Воспоминания")
+    builder.button(text="�🗑️ Удалить элемент")
     builder.adjust(2)
     return builder.as_markup(resize_keyboard=True, one_time_keyboard=False)
 
@@ -628,6 +715,209 @@ async def cancel_delete(callback: types.CallbackQuery):
         await callback.answer("❌ Доступ запрещен!", show_alert=True)
         return
     await callback.message.edit_text("Отменено ✌️", reply_markup=None)
+
+# 8. ОТСЛЕЖИВАНИЕ ОТНОШЕНИЙ
+@dp.message(F.text == "💕 Отношения")
+async def relationship_menu(message: types.Message):
+    if not await check_access(message):
+        return
+    
+    stats = calculate_relationship_stats()
+    
+    if stats:
+        text = f"""💕 <b>Наши отношения:</b>
+
+<b>Вместе уже:</b>
+🕐 <b>{stats['days']} дней</b>
+📅 <b>{stats['months']} месяцев {stats['days_in_month']} дней</b>
+
+<b>Начало:</b> {stats['formatted_date']}
+"""
+    else:
+        text = """💕 <b>Отношения</b>
+
+Дата начала отношений еще не установлена.
+Хочешь её добавить?
+"""
+    
+    builder = InlineKeyboardBuilder()
+    builder.button(text="📅 Установить дату", callback_data="set_relationship_date")
+    if stats:
+        builder.button(text="✏️ Изменить дату", callback_data="change_relationship_date")
+    builder.button(text="🔙 Назад", callback_data="back_to_menu")
+    builder.adjust(1)
+    
+    await message.answer(text, parse_mode="HTML", reply_markup=builder.as_markup())
+
+@dp.callback_query(F.data == "set_relationship_date")
+async def set_date_start(callback: types.CallbackQuery, state: FSMContext):
+    user_id = callback.from_user.id
+    if user_id not in ALLOWED_USERS:
+        await callback.answer("❌ Доступ запрещен!", show_alert=True)
+        return
+    
+    await state.set_state(MyStates.setting_relationship_date)
+    await callback.message.edit_text(
+        "📅 Напиши дату начала отношений в формате: <b>YYYY-MM-DD</b>\n\n"
+        "Пример: <b>2026-01-28</b>",
+        parse_mode="HTML"
+    )
+
+@dp.callback_query(F.data == "change_relationship_date")
+async def change_date_start(callback: types.CallbackQuery, state: FSMContext):
+    user_id = callback.from_user.id
+    if user_id not in ALLOWED_USERS:
+        await callback.answer("❌ Доступ запрещен!", show_alert=True)
+        return
+    
+    await state.set_state(MyStates.setting_relationship_date)
+    await callback.message.edit_text(
+        "📅 Введи новую дату в формате: <b>YYYY-MM-DD</b>\n\n"
+        "Пример: <b>2026-01-28</b>",
+        parse_mode="HTML"
+    )
+
+@dp.message(MyStates.setting_relationship_date)
+async def save_relationship_date(message: types.Message, state: FSMContext):
+    if not message.text or not message.text.strip():
+        await message.answer("⚠️ Дата не может быть пустой!")
+        return
+    
+    date_str = message.text.strip()
+    
+    if set_relationship_date(date_str):
+        stats = calculate_relationship_stats()
+        await state.clear()
+        text = f"""✅ <b>Дата установлена!</b>
+
+💕 <b>Вместе уже:</b>
+🕐 <b>{stats['days']} дней</b>
+📅 <b>{stats['months']} месяцев {stats['days_in_month']} дней</b>
+
+<b>Начало:</b> {stats['formatted_date']}
+"""
+        await message.answer(text, parse_mode="HTML", reply_markup=main_menu())
+    else:
+        await message.answer("❌ Неверный формат даты! Используй YYYY-MM-DD (например: 2026-01-28)")
+
+# 9. ВОСПОМИНАНИЯ
+@dp.message(F.text == "📸 Воспоминания")
+async def memories_menu(message: types.Message):
+    if not await check_access(message):
+        return
+    
+    memories = get_memories()
+    
+    builder = InlineKeyboardBuilder()
+    builder.button(text="➕ Добавить воспоминание", callback_data="add_memory")
+    if memories:
+        builder.button(text="📖 Посмотреть все", callback_data="view_all_memories")
+        builder.button(text="🗑️ Удалить воспоминание", callback_data="delete_memory_menu")
+    builder.button(text="🔙 Назад", callback_data="back_to_menu")
+    builder.adjust(1)
+    
+    text = f"""📸 <b>Воспоминания</b>
+
+Всего сохранено: <b>{len(memories)} воспоминаний</b>
+"""
+    await message.answer(text, parse_mode="HTML", reply_markup=builder.as_markup())
+
+@dp.callback_query(F.data == "add_memory")
+async def add_memory_start(callback: types.CallbackQuery, state: FSMContext):
+    user_id = callback.from_user.id
+    if user_id not in ALLOWED_USERS:
+        await callback.answer("❌ Доступ запрещен!", show_alert=True)
+        return
+    
+    await state.set_state(MyStates.adding_memory)
+    await callback.message.edit_text("✍️ Напиши воспоминание:")
+
+@dp.message(MyStates.adding_memory)
+async def save_memory_text(message: types.Message, state: FSMContext):
+    if not message.text or not message.text.strip():
+        await message.answer("⚠️ Воспоминание не может быть пустым!")
+        return
+    
+    memory_text = message.text.strip()
+    if len(memory_text) > 1000:
+        await message.answer("⚠️ Воспоминание слишком длинное (макс 1000 символов)")
+        return
+    
+    if add_memory(memory_text):
+        await state.clear()
+        await message.answer("✅ Воспоминание сохранено! 💕", reply_markup=main_menu())
+    else:
+        await message.answer("❌ Ошибка при сохранении воспоминания", reply_markup=main_menu())
+        await state.clear()
+
+@dp.callback_query(F.data == "view_all_memories")
+async def view_all_memories(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    if user_id not in ALLOWED_USERS:
+        await callback.answer("❌ Доступ запрещен!", show_alert=True)
+        return
+    
+    memories = get_memories()
+    if not memories:
+        await callback.answer("Нет воспоминаний!", show_alert=True)
+        return
+    
+    text = "<b>📸 Все воспоминания:</b>\n\n"
+    for i, memory in enumerate(memories, 1):
+        text += f"<b>{i}.</b> <i>{memory['date']}</i>\n{memory['text']}\n\n"
+    
+    await callback.message.edit_text(text, parse_mode="HTML")
+
+@dp.callback_query(F.data == "delete_memory_menu")
+async def delete_memory_menu(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    if user_id not in ALLOWED_USERS:
+        await callback.answer("❌ Доступ запрещен!", show_alert=True)
+        return
+    
+    memories = get_memories()
+    if not memories:
+        await callback.answer("Нет воспоминаний!", show_alert=True)
+        return
+    
+    builder = InlineKeyboardBuilder()
+    for i, memory in enumerate(memories):
+        display_text = memory['text'][:30] + "..." if len(memory['text']) > 30 else memory['text']
+        builder.button(text=f"❌ {display_text}", callback_data=f"del_memory_{i}")
+    builder.button(text="🔙 Назад", callback_data="back_to_menu")
+    builder.adjust(1)
+    
+    await callback.message.edit_text("Какое воспоминание удалить?", reply_markup=builder.as_markup())
+
+@dp.callback_query(F.data.startswith("del_memory_"))
+async def delete_memory_cb(callback: types.CallbackQuery):
+    try:
+        user_id = callback.from_user.id
+        if user_id not in ALLOWED_USERS:
+            await callback.answer("❌ Доступ запрещен!", show_alert=True)
+            return
+        
+        idx_str = callback.data.rsplit("_", 1)[-1]
+        idx = int(idx_str)
+        
+        memories = get_memories()
+        if 0 <= idx < len(memories):
+            removed = memories[idx]['text'][:50]
+            delete_memory(idx)
+            await callback.message.edit_text(f"✅ Воспоминание удалено\n\nОсталось {len(memories)-1} воспоминаний")
+        else:
+            await callback.answer("❌ Воспоминание не найдено!", show_alert=True)
+    except Exception as e:
+        logging.error(f"❌ Error deleting memory: {e}")
+        await callback.answer(f"❌ Ошибка: {e}", show_alert=True)
+
+@dp.callback_query(F.data == "back_to_menu")
+async def back_to_menu_cb(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    if user_id not in ALLOWED_USERS:
+        await callback.answer("❌ Доступ запрещен!", show_alert=True)
+        return
+    await callback.message.delete()
 
 # --- FALLBACK ОБРАБОТЧИКИ ДЛЯ ЗАБЫТЫХ СОСТОЯНИЙ ---
 @dp.message(MyStates.waiting_for_secret_message)
