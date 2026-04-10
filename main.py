@@ -219,9 +219,9 @@ def main_menu():
     builder.button(text="🤖 Спросить ИИ")
     builder.button(text="💌 Тайное сообщение")
     builder.button(text="📂 Посмотреть списки")
-    builder.button(text="� Отношения")
+    builder.button(text="💕 Отношения")
     builder.button(text="📸 Воспоминания")
-    builder.button(text="�🗑️ Удалить элемент")
+    builder.button(text="🗑️ Удалить элемент")
     builder.adjust(2)
     return builder.as_markup(resize_keyboard=True, one_time_keyboard=False)
 
