@@ -408,7 +408,7 @@ async def select_recipient(message: types.Message, state: FSMContext):
     if message.text == "👤 Тёма":
         recipient_id = 7118929376
         recipient_name = "Тёма"
-    elif message.text == " Майя":
+    elif message.text == "👩 Майя":
         recipient_id = 8481047835
         recipient_name = "Майя"
     else:
