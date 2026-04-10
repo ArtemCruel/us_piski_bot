@@ -18,4 +18,10 @@ env/
 *.swo
 
 # Bot data
-*.json
+wishlist.json
+quotes.json
+relationship.json
+memories.json
+
+# Allow config
+!railway.json
