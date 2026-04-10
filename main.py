@@ -215,6 +215,16 @@ def delete_memory(idx):
 # ============================================================
 #                      КЛАВИАТУРЫ
 # ============================================================
+
+# Тексты всех кнопок меню — для защиты от случайного сохранения
+MENU_BUTTONS = {
+    "✨ Факт про Майю", "🎁 В виш-лист", "🤣 В цитаты",
+    "🤖 Спросить ИИ", "💌 Тайное сообщение", "📂 Посмотреть списки",
+    "💕 Отношения", "📸 Воспоминания", "🗑️ Удалить элемент",
+    "❌ Отмена", "🔙 Закончить общение",
+}
+
+
 def main_menu():
     builder = ReplyKeyboardBuilder()
     builder.button(text="✨ Факт про Майю")
@@ -392,6 +402,11 @@ async def save_wish(message: types.Message, state: FSMContext):
         if not wish_text:
             await message.answer("⚠️ Желание не может быть пустым!")
             return
+        # Защита: если нажали кнопку меню вместо текста
+        if wish_text in MENU_BUTTONS:
+            await state.clear()
+            await message.answer("⚠️ Ввод отменён. Возвращаю в меню.", reply_markup=main_menu())
+            return
         if len(wish_text) > 500:
             await message.answer("⚠️ Слишком длинное (макс 500 символов)")
             return
@@ -429,6 +444,11 @@ async def save_quote(message: types.Message, state: FSMContext):
         quote_text = message.text.strip()
         if not quote_text:
             await message.answer("⚠️ Цитата не может быть пустой!")
+            return
+        # Защита: если нажали кнопку меню вместо текста
+        if quote_text in MENU_BUTTONS:
+            await state.clear()
+            await message.answer("⚠️ Ввод отменён. Возвращаю в меню.", reply_markup=main_menu())
             return
         if len(quote_text) > 500:
             await message.answer("⚠️ Слишком длинная (макс 500 символов)")
@@ -540,6 +560,11 @@ async def send_secret_message(message: types.Message, state: FSMContext):
         msg = message.text.strip()
         if not msg:
             await message.answer("⚠️ Сообщение не может быть пустым!")
+            return
+        # Защита: если нажали кнопку меню
+        if msg in MENU_BUTTONS:
+            await state.clear()
+            await message.answer("⚠️ Ввод отменён. Возвращаю в меню.", reply_markup=main_menu())
             return
         if len(msg) > 2000:
             await message.answer("⚠️ Слишком длинное (макс 2000)")
@@ -1002,12 +1027,30 @@ async def back_to_menu(callback: types.CallbackQuery, state: FSMContext):
 
 
 # ============================================================
+#     ГЛОБАЛЬНЫЕ ОБРАБОТЧИКИ КНОПОК (ловят вне состояний)
+# ============================================================
+@dp.message(F.text == "❌ Отмена")
+async def global_cancel(message: types.Message, state: FSMContext):
+    """Если пользователь нажал Отмена вне какого-либо состояния."""
+    await state.clear()
+    await message.answer("Главное меню 🏠", reply_markup=main_menu())
+
+
+@dp.message(F.text == "🔙 Закончить общение")
+async def global_end_ai(message: types.Message, state: FSMContext):
+    """Если пользователь нажал Закончить общение вне состояния ИИ."""
+    await state.clear()
+    await message.answer("Главное меню 🏠", reply_markup=main_menu())
+
+
+# ============================================================
 #         FALLBACK — НЕИЗВЕСТНЫЕ СООБЩЕНИЯ (ПОСЛЕДНИЙ!)
 # ============================================================
 @dp.message()
-async def unknown_message(message: types.Message):
+async def unknown_message(message: types.Message, state: FSMContext):
     if not await check_access(message):
         return
+    await state.clear()
     await message.answer(
         "🤔 Не понимаю. Нажми /start чтобы открыть меню.",
         reply_markup=main_menu(),
