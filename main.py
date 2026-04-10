@@ -1060,8 +1060,10 @@ async def unknown_message(message: types.Message, state: FSMContext):
 # ============================================================
 #                        ЗАПУСК
 # ============================================================
+BOT_VERSION = "3.2.1"
+
 async def main():
-    logging.info("�� Bot starting... (v3.0 — полный рефакторинг)")
+    logging.info(f"🚀 Bot starting... v{BOT_VERSION}")
     try:
         await dp.start_polling(bot)
     except Exception as e:
