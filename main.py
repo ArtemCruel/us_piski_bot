@@ -3,7 +3,6 @@ import json
 import os
 import logging
 import requests
-from datetime import datetime
 from dotenv import load_dotenv
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
@@ -56,8 +55,6 @@ class MyStates(StatesGroup):
     deleting_quote = State()
     selecting_message_recipient = State()
     waiting_for_secret_message = State()
-    setting_relationship_date = State()
-    adding_memory = State()
 
 # --- РАБОТА С ДАННЫМИ ---
 def get_data(name):
@@ -128,88 +125,6 @@ def delete_quote(user_id, idx):
         return True
     return False
 
-def get_relationship_date():
-    """Получить дату начала отношений"""
-    try:
-        with open("relationship.json", "r", encoding="utf-8") as f:
-            data = json.load(f)
-            return data.get("start_date")
-    except FileNotFoundError:
-        return None
-    except json.JSONDecodeError:
-        logging.error("❌ JSON corrupted in relationship.json")
-        return None
-
-def set_relationship_date(date_str):
-    """Установить дату начала отношений (формат: YYYY-MM-DD)"""
-    try:
-        datetime.strptime(date_str, "%Y-%m-%d")
-        data = {"start_date": date_str}
-        with open("relationship.json", "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=4)
-        return True
-    except ValueError:
-        return False
-    except IOError as e:
-        logging.error(f"❌ Failed to save relationship.json: {e}")
-        return False
-
-def calculate_relationship_stats():
-    """Вычислить статистику отношений"""
-    start_date_str = get_relationship_date()
-    if not start_date_str:
-        return None
-    
-    try:
-        start_date = datetime.strptime(start_date_str, "%Y-%m-%d")
-        today = datetime.now()
-        days_together = (today - start_date).days
-        
-        months = days_together // 30
-        remaining_days = days_together % 30
-        
-        return {
-            "days": days_together,
-            "months": months,
-            "days_in_month": remaining_days,
-            "start_date": start_date_str,
-            "formatted_date": start_date.strftime("%d.%m.%y")
-        }
-    except ValueError:
-        return None
-
-def add_memory(memory_text):
-    """Добавить воспоминание"""
-    try:
-        data = get_data("memories")
-        if "memories_list" not in data:
-            data["memories_list"] = []
-        
-        memory_entry = {
-            "text": memory_text,
-            "date": datetime.now().strftime("%d.%m.%y %H:%M")
-        }
-        data["memories_list"].append(memory_entry)
-        save_data("memories", data)
-        return True
-    except Exception as e:
-        logging.error(f"❌ Error saving memory: {e}")
-        return False
-
-def get_memories():
-    """Получить все воспоминания"""
-    data = get_data("memories")
-    return data.get("memories_list", [])
-
-def delete_memory(idx):
-    """Удалить воспоминание по индексу"""
-    data = get_data("memories")
-    if "memories_list" in data and 0 <= idx < len(data["memories_list"]):
-        data["memories_list"].pop(idx)
-        save_data("memories", data)
-        return True
-    return False
-
 # --- ГЛАВНОЕ МЕНЮ ---
 def main_menu():
     builder = ReplyKeyboardBuilder()
@@ -219,8 +134,6 @@ def main_menu():
     builder.button(text="🤖 Спросить ИИ")
     builder.button(text="💌 Тайное сообщение")
     builder.button(text="📂 Посмотреть списки")
-    builder.button(text="💕 Отношения")
-    builder.button(text="📸 Воспоминания")
     builder.button(text="🗑️ Удалить элемент")
     builder.adjust(2)
     return builder.as_markup(resize_keyboard=True, one_time_keyboard=False)
@@ -319,10 +232,13 @@ async def cmd_menu(message: types.Message, state: FSMContext):
 # 1. ФАКТ
 @dp.message(F.text == "✨ Факт про Майю")
 async def get_fact(message: types.Message):
+    """Генерирует случайный факт про Майю"""
     if not await check_access(message):
         return
-    await message.answer("⏳ Сочиняю...")
-    prompt = """Придумай один интересный и милый факт или комплимент о девушке по имени Майя. 
+    
+    try:
+        await message.answer("⏳ Сочиняю...")
+        prompt = """Придумай один интересный и милый факт или комплимент о девушке по имени Майя. 
 Факт должен быть:
 - Позитивным и теплым
 - Коротким (1-2 предложения)
@@ -332,13 +248,20 @@ async def get_fact(message: types.Message):
 Пример стиля: "Майя умеет находить красоту в самых обычных моментах и делиться ей с окружающими."
 
 Напиши один факт без предисловий:"""
-    text = await call_ai(prompt)
-    if text:
-        # Обрезаем если очень длинный
-        if len(text) > 1000:
-            text = text[:1000] + "..."
-        await message.answer(text)
-    else:
+        
+        text = await call_ai(prompt)
+        
+        if text:
+            # Обрезаем если очень длинный
+            if len(text) > 1000:
+                text = text[:1000] + "..."
+            await message.answer(text)
+            logging.info(f"✨ Fact generated for user {message.from_user.id}")
+        else:
+            await message.answer("❌ Ошибка")
+            logging.error(f"❌ Fact generation failed: AI returned None")
+    except Exception as e:
+        logging.error(f"❌ Error in get_fact: {e}")
         await message.answer("❌ Ошибка")
 
 # 2. ВИШ-ЛИСТ
@@ -359,12 +282,13 @@ async def cancel_wish(message: types.Message, state: FSMContext):
 
 @dp.message(MyStates.waiting_for_wish, F.text)
 async def save_wish(message: types.Message, state: FSMContext):
-    # Проверяем, что текст не пустой
-    if not message.text or not message.text.strip():
-        await message.answer("⚠️ Желание не может быть пустым!")
-        return
-    
+    """Сохраняет желание"""
     try:
+        # Проверяем, что текст не пустой
+        if not message.text or not message.text.strip():
+            await message.answer("⚠️ Желание не может быть пустым!")
+            return
+        
         wish_text = message.text.strip()
         user_id = message.from_user.id
         user_name = USER_NAMES.get(user_id, "Пользователь")
@@ -374,12 +298,14 @@ async def save_wish(message: types.Message, state: FSMContext):
             await message.answer("⚠️ Желание слишком длинное (макс 500 символов)")
             return
         
+        # Сохраняем
         add_wish(user_id, wish_text)
         await state.clear()
         await message.answer(f"✅ Добавлено в твой виш-лист: {wish_text}", reply_markup=main_menu())
+        logging.info(f"✅ Wish added for user {user_id}: {wish_text}")
     except Exception as e:
-        logging.error(f"❌ Error saving wish: {e}")
-        await message.answer(f"❌ Ошибка при сохранении: {e}", reply_markup=main_menu())
+        logging.error(f"❌ Error in save_wish: {type(e).__name__}: {e}")
+        await message.answer("❌ Ошибка при сохранении", reply_markup=main_menu())
         await state.clear()
 
 # 3. ЦИТАТЫ
@@ -400,12 +326,13 @@ async def cancel_quote(message: types.Message, state: FSMContext):
 
 @dp.message(MyStates.waiting_for_quote, F.text)
 async def save_quote(message: types.Message, state: FSMContext):
-    # Проверяем, что текст не пустой
-    if not message.text or not message.text.strip():
-        await message.answer("⚠️ Цитата не может быть пустой!")
-        return
-    
+    """Сохраняет цитату"""
     try:
+        # Проверяем, что текст не пустой
+        if not message.text or not message.text.strip():
+            await message.answer("⚠️ Цитата не может быть пустой!")
+            return
+        
         quote_text = message.text.strip()
         user_id = message.from_user.id
         user_name = USER_NAMES.get(user_id, "Пользователь")
@@ -415,12 +342,14 @@ async def save_quote(message: types.Message, state: FSMContext):
             await message.answer("⚠️ Цитата слишком длинная (макс 500 символов)")
             return
         
+        # Сохраняем
         add_quote(user_id, quote_text)
         await state.clear()
         await message.answer("🤣 Ха-ха, сохранил в твою коллекцию!", reply_markup=main_menu())
+        logging.info(f"✅ Quote added for user {user_id}: {quote_text}")
     except Exception as e:
-        logging.error(f"❌ Error saving quote: {e}")
-        await message.answer(f"❌ Ошибка при сохранении: {e}", reply_markup=main_menu())
+        logging.error(f"❌ Error in save_quote: {type(e).__name__}: {e}")
+        await message.answer("❌ Ошибка при сохранении", reply_markup=main_menu())
         await state.clear()
 
 # 4. ИИ АССИСТЕНТ
@@ -444,24 +373,35 @@ async def ai_end(message: types.Message, state: FSMContext):
 
 @dp.message(MyStates.waiting_for_ai)
 async def ai_answer(message: types.Message, state: FSMContext):
-    # Проверяем, что текст не пустой
-    if not message.text or not message.text.strip():
-        await message.answer("⚠️ Вопрос не может быть пустым!", reply_markup=ai_menu())
-        return
-    
-    # Ограничиваем длину вопроса
-    if len(message.text) > 2000:
-        await message.answer("⚠️ Вопрос слишком длинный (макс 2000 символов)", reply_markup=ai_menu())
-        return
-    
-    await message.answer("⏳ Думаю...")
-    text = await call_ai(message.text)
-    if text:
-        # Ограничиваем длину ответа для читаемости
-        if len(text) > 3000:
-            text = text[:3000] + "\n\n... (ответ обрезан)"
-        await message.answer(text, reply_markup=ai_menu())
-    else:
+    """Ответ ИИ на вопрос"""
+    try:
+        # Проверяем, что текст не пустой
+        if not message.text or not message.text.strip():
+            await message.answer("⚠️ Вопрос не может быть пустым!", reply_markup=ai_menu())
+            return
+        
+        question_text = message.text.strip()
+        
+        # Ограничиваем длину вопроса
+        if len(question_text) > 2000:
+            await message.answer("⚠️ Вопрос слишком длинный (макс 2000 символов)", reply_markup=ai_menu())
+            return
+        
+        await message.answer("⏳ Думаю...", reply_markup=ai_menu())
+        
+        text = await call_ai(question_text)
+        
+        if text:
+            # Ограничиваем длину ответа для читаемости
+            if len(text) > 3000:
+                text = text[:3000] + "\n\n... (ответ обрезан)"
+            await message.answer(text, reply_markup=ai_menu())
+            logging.info(f"🤖 AI answered question from user {message.from_user.id}")
+        else:
+            await message.answer("❌ Ошибка", reply_markup=ai_menu())
+            logging.error(f"❌ AI response failed for user {message.from_user.id}")
+    except Exception as e:
+        logging.error(f"❌ Error in ai_answer: {type(e).__name__}: {e}")
         await message.answer("❌ Ошибка", reply_markup=ai_menu())
 
 # 5. ТАЙНЫЕ СООБЩЕНИЯ ОТ МАЙИ
@@ -509,6 +449,7 @@ async def select_recipient(message: types.Message, state: FSMContext):
 
 @dp.message(MyStates.waiting_for_secret_message, F.text)
 async def send_secret_message(message: types.Message, state: FSMContext):
+    """Отправка тайного сообщения"""
     try:
         # Проверяем, что сообщение не пустое
         if not message.text or not message.text.strip():
@@ -532,449 +473,265 @@ async def send_secret_message(message: types.Message, state: FSMContext):
             await message.answer("⚠️ Сообщение слишком длинное (макс 2000 символов)")
             return
         
-        # Отправляем сообщение получателю (используем HTML вместо Markdown)
-        await bot.send_message(
-            recipient_id,
-            f"💌 <b>Тайное сообщение от {sender_name}:</b>\n\n<i>{message_text}</i>",
-            parse_mode="HTML"
-        )
-        await message.answer(f"✅ Сообщение отправлено {recipient_name}!", reply_markup=main_menu())
+        # Отправляем сообщение получателю
+        try:
+            await bot.send_message(
+                recipient_id,
+                f"💌 <b>Тайное сообщение от {sender_name}:</b>\n\n<i>{message_text}</i>",
+                parse_mode="HTML"
+            )
+            await message.answer(f"✅ Сообщение отправлено {recipient_name}!", reply_markup=main_menu())
+            logging.info(f"💌 Secret message sent from {sender_id} to {recipient_id}")
+        except Exception as send_error:
+            logging.error(f"❌ Failed to send message to recipient: {send_error}")
+            await message.answer(f"❌ Не смог отправить сообщение. Попробуй позже.", reply_markup=main_menu())
     except Exception as e:
-        logging.error(f"❌ Error sending secret message: {e}")
-        await message.answer(f"❌ Ошибка при отправке сообщения: {e}", reply_markup=main_menu())
-    
-    await state.clear()
+        logging.error(f"❌ Error in send_secret_message: {e}")
+        await message.answer(f"❌ Ошибка", reply_markup=main_menu())
+    finally:
+        await state.clear()
 
 # 6. ПРОСМОТР СПИСКОВ
 @dp.message(F.text == "📂 Посмотреть списки")
 async def show_all(message: types.Message):
+    """Показывает все желания и цитаты всех пользователей"""
     logging.info(f"📂 User requested to view lists: {message.from_user.id}")
     if not await check_access(message):
         return
     
-    user_id = message.from_user.id
-    
-    # Получаем данные для всех пользователей
-    all_wishes = get_data("wishlist")
-    all_quotes = get_data("quotes")
-    
-    # Формируем текст с разделением
-    text = "<b>🎁 ВИШИРЦЫ:</b>\n\n"
-    
-    wishes_empty = True
-    for uid in ALLOWED_USERS:
-        uid_str = str(uid)
-        uid_name = USER_NAMES.get(uid, "Неизвестный")
-        uid_wishes = all_wishes.get(uid_str, [])
+    try:
+        user_id = message.from_user.id
         
-        if uid_wishes:
-            wishes_empty = False
-            text += f"<b>{uid_name}:</b>\n"
-            for i, wish in enumerate(uid_wishes, 1):
-                text += f"  {i}. {wish}\n"
-            text += "\n"
-    
-    if wishes_empty:
-        text += "<i>Все виш-листы пусты</i>\n"
-    
-    text += "\n<b>🤣 ЦИТАТЫ:</b>\n\n"
-    
-    quotes_empty = True
-    for uid in ALLOWED_USERS:
-        uid_str = str(uid)
-        uid_name = USER_NAMES.get(uid, "Неизвестный")
-        uid_quotes = all_quotes.get(uid_str, [])
+        # Получаем данные для всех пользователей
+        all_wishes = get_data("wishlist")
+        all_quotes = get_data("quotes")
         
-        if uid_quotes:
-            quotes_empty = False
-            text += f"<b>{uid_name}:</b>\n"
-            for i, quote in enumerate(uid_quotes, 1):
-                text += f"  {i}. {quote}\n"
-            text += "\n"
-    
-    if quotes_empty:
-        text += "<i>Все цитаты пусты</i>"
-    
-    logging.info(f"✅ Sending lists to user {message.from_user.id}")
-    await message.answer(text, parse_mode="HTML")
+        # Формируем текст с разделением
+        text = "<b>🎁 ВИШИРЦЫ:</b>\n\n"
+        
+        wishes_empty = True
+        for uid in ALLOWED_USERS:
+            uid_str = str(uid)
+            uid_name = USER_NAMES.get(uid, "Неизвестный")
+            uid_wishes = all_wishes.get(uid_str, [])
+            
+            if uid_wishes:
+                wishes_empty = False
+                text += f"<b>{uid_name}:</b>\n"
+                for i, wish in enumerate(uid_wishes, 1):
+                    text += f"  {i}. {wish}\n"
+                text += "\n"
+        
+        if wishes_empty:
+            text += "<i>Все виш-листы пусты</i>\n"
+        
+        text += "\n<b>🤣 ЦИТАТЫ:</b>\n\n"
+        
+        quotes_empty = True
+        for uid in ALLOWED_USERS:
+            uid_str = str(uid)
+            uid_name = USER_NAMES.get(uid, "Неизвестный")
+            uid_quotes = all_quotes.get(uid_str, [])
+            
+            if uid_quotes:
+                quotes_empty = False
+                text += f"<b>{uid_name}:</b>\n"
+                for i, quote in enumerate(uid_quotes, 1):
+                    text += f"  {i}. {quote}\n"
+                text += "\n"
+        
+        if quotes_empty:
+            text += "<i>Все цитаты пусты</i>"
+        
+        logging.info(f"✅ Lists sent to user {message.from_user.id}")
+        await message.answer(text, parse_mode="HTML")
+    except Exception as e:
+        logging.error(f"❌ Error in show_all: {type(e).__name__}: {e}")
+        await message.answer("❌ Ошибка при получении списков", reply_markup=main_menu())
 
 # 7. УДАЛЕНИЕ
 @dp.message(F.text == "🗑️ Удалить элемент")
 async def delete_menu(message: types.Message):
+    """Показывает меню удаления элементов"""
     if not await check_access(message):
         return
-    builder = InlineKeyboardBuilder()
-    builder.button(text="🎁 Удалить из виш-листа", callback_data="delete_wish_menu")
-    builder.button(text="🤣 Удалить из цитат", callback_data="delete_quote_menu")
-    builder.button(text="❌ Отмена", callback_data="cancel_delete")
-    builder.adjust(1)
-    await message.answer("Что удаляем?", reply_markup=builder.as_markup())
+    
+    try:
+        builder = InlineKeyboardBuilder()
+        builder.button(text="🎁 Удалить из виш-листа", callback_data="delete_wish_menu")
+        builder.button(text="🤣 Удалить из цитат", callback_data="delete_quote_menu")
+        builder.button(text="❌ Отмена", callback_data="cancel_delete")
+        builder.adjust(1)
+        await message.answer("Что удаляем?", reply_markup=builder.as_markup())
+        logging.info(f"🗑️ Delete menu shown to user {message.from_user.id}")
+    except Exception as e:
+        logging.error(f"❌ Error in delete_menu: {e}")
+        await message.answer("❌ Ошибка", reply_markup=main_menu())
 
 @dp.callback_query(F.data == "delete_wish_menu")
 async def show_wishes_to_delete(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    if user_id not in ALLOWED_USERS:
-        await callback.answer("❌ Доступ запрещен!", show_alert=True)
-        return
-    
-    wishes = get_user_wishes(user_id)
-    if not wishes:
-        await callback.answer("У тебя нет хотелок!", show_alert=True)
-        return
-    
-    builder = InlineKeyboardBuilder()
-    for i, wish in enumerate(wishes):
-        # Ограничиваем длину текста кнопки для совместимости с Telegram
-        display_text = wish[:40] + "..." if len(wish) > 40 else wish
-        builder.button(text=f"❌ {display_text}", callback_data=f"del_wish_{i}")
-    builder.button(text="🔙 Назад", callback_data="cancel_delete")
-    builder.adjust(1)
-    
-    await callback.message.edit_text("Какую хотелку удалить?", reply_markup=builder.as_markup())
+    """Показывает список желаний для удаления"""
+    try:
+        user_id = callback.from_user.id
+        if user_id not in ALLOWED_USERS:
+            await callback.answer("❌ Доступ запрещен!", show_alert=True)
+            return
+        
+        wishes = get_user_wishes(user_id)
+        if not wishes:
+            await callback.answer("У тебя нет хотелок!", show_alert=True)
+            return
+        
+        builder = InlineKeyboardBuilder()
+        for i, wish in enumerate(wishes):
+            # Ограничиваем длину текста кнопки для совместимости с Telegram
+            display_text = wish[:40] + "..." if len(wish) > 40 else wish
+            builder.button(text=f"❌ {display_text}", callback_data=f"del_wish_{i}")
+        builder.button(text="🔙 Назад", callback_data="cancel_delete")
+        builder.adjust(1)
+        
+        await callback.message.edit_text("Какую хотелку удалить?", reply_markup=builder.as_markup())
+        logging.info(f"📂 Wishes list shown to user {user_id}")
+    except Exception as e:
+        logging.error(f"❌ Error in show_wishes_to_delete: {e}")
+        await callback.answer("❌ Ошибка", show_alert=True)
 
 @dp.callback_query(F.data == "delete_quote_menu")
 async def show_quotes_to_delete(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    if user_id not in ALLOWED_USERS:
-        await callback.answer("❌ Доступ запрещен!", show_alert=True)
-        return
-    
-    quotes = get_user_quotes(user_id)
-    if not quotes:
-        await callback.answer("У тебя нет цитат!", show_alert=True)
-        return
-    
-    builder = InlineKeyboardBuilder()
-    for i, quote in enumerate(quotes):
-        # Ограничиваем длину текста кнопки для совместимости с Telegram
-        display_text = quote[:40] + "..." if len(quote) > 40 else quote
-        builder.button(text=f"❌ {display_text}", callback_data=f"del_quote_{i}")
-    builder.button(text="🔙 Назад", callback_data="cancel_delete")
-    builder.adjust(1)
-    
-    await callback.message.edit_text("Какую цитату удалить?", reply_markup=builder.as_markup())
+    """Показывает список цитат для удаления"""
+    try:
+        user_id = callback.from_user.id
+        if user_id not in ALLOWED_USERS:
+            await callback.answer("❌ Доступ запрещен!", show_alert=True)
+            return
+        
+        quotes = get_user_quotes(user_id)
+        if not quotes:
+            await callback.answer("У тебя нет цитат!", show_alert=True)
+            return
+        
+        builder = InlineKeyboardBuilder()
+        for i, quote in enumerate(quotes):
+            # Ограничиваем длину текста кнопки для совместимости с Telegram
+            display_text = quote[:40] + "..." if len(quote) > 40 else quote
+            builder.button(text=f"❌ {display_text}", callback_data=f"del_quote_{i}")
+        builder.button(text="🔙 Назад", callback_data="cancel_delete")
+        builder.adjust(1)
+        
+        await callback.message.edit_text("Какую цитату удалить?", reply_markup=builder.as_markup())
+        logging.info(f"📂 Quotes list shown to user {user_id}")
+    except Exception as e:
+        logging.error(f"❌ Error in show_quotes_to_delete: {e}")
+        await callback.answer("❌ Ошибка", show_alert=True)
 
 @dp.callback_query(F.data.startswith("del_wish_"))
 async def delete_wish_cb(callback: types.CallbackQuery):
+    """Удаление желания с обработкой ошибок"""
     try:
         user_id = callback.from_user.id
         if user_id not in ALLOWED_USERS:
             await callback.answer("❌ Доступ запрещен!", show_alert=True)
             return
         
-        # Парсим индекс - берем все после последнего underscore
-        idx_str = callback.data.rsplit("_", 1)[-1]
+        # Парсим индекс - берем все после "del_wish_"
+        idx_str = callback.data.split("del_wish_")[1]
         idx = int(idx_str)
         
-        # Получаем хотелку перед удалением (для сообщения)
+        # Получаем текущий список
         wishes = get_user_wishes(user_id)
-        if 0 <= idx < len(wishes):
-            removed = wishes[idx]
-            delete_wish(user_id, idx)
-            await callback.message.edit_text(f"✅ Удалено: {removed}\n\nОсталось {len(wishes)-1} хотелок")
+        
+        # Проверяем границы
+        if not (0 <= idx < len(wishes)):
+            await callback.answer("❌ Желание не найдено!", show_alert=True)
+            return
+        
+        # Запоминаем текст ДО удаления
+        removed_text = wishes[idx]
+        wishes_count_before = len(wishes)
+        
+        # Удаляем
+        if delete_wish(user_id, idx):
+            wishes_count_after = wishes_count_before - 1
+            await callback.message.edit_text(
+                f"✅ Удалено: {removed_text}\n\nОсталось {wishes_count_after} хотелок",
+                reply_markup=None
+            )
+            logging.info(f"✅ Wish deleted for user {user_id}: {removed_text}")
         else:
-            await callback.answer("❌ Хотелка не найдена!", show_alert=True)
-    except ValueError:
-        logging.error(f"❌ Invalid callback data format: {callback.data}")
-        await callback.answer(f"❌ Ошибка: неверный формат", show_alert=True)
+            await callback.answer("❌ Не удалось удалить!", show_alert=True)
+            
+    except ValueError as e:
+        logging.error(f"❌ Invalid callback data: {callback.data}")
+        await callback.answer("❌ Ошибка: неверный формат", show_alert=True)
     except Exception as e:
-        logging.error(f"❌ Error deleting wish: {e}")
-        await callback.answer(f"❌ Ошибка: {e}", show_alert=True)
+        logging.error(f"❌ Error in delete_wish_cb: {type(e).__name__}: {e}")
+        await callback.answer(f"❌ Ошибка", show_alert=True)
 
 @dp.callback_query(F.data.startswith("del_quote_"))
 async def delete_quote_cb(callback: types.CallbackQuery):
+    """Удаление цитаты с обработкой ошибок"""
     try:
         user_id = callback.from_user.id
         if user_id not in ALLOWED_USERS:
             await callback.answer("❌ Доступ запрещен!", show_alert=True)
             return
         
-        # Парсим индекс - берем все после последнего underscore
-        idx_str = callback.data.rsplit("_", 1)[-1]
+        # Парсим индекс - берем все после "del_quote_"
+        idx_str = callback.data.split("del_quote_")[1]
         idx = int(idx_str)
         
-        # Получаем цитату перед удалением (для сообщения)
+        # Получаем текущий список
         quotes = get_user_quotes(user_id)
-        if 0 <= idx < len(quotes):
-            removed = quotes[idx]
-            delete_quote(user_id, idx)
-            await callback.message.edit_text(f"✅ Удалено: {removed}\n\nОсталось {len(quotes)-1} цитат")
-        else:
+        
+        # Проверяем границы
+        if not (0 <= idx < len(quotes)):
             await callback.answer("❌ Цитата не найдена!", show_alert=True)
-    except ValueError:
-        logging.error(f"❌ Invalid callback data format: {callback.data}")
-        await callback.answer(f"❌ Ошибка: неверный формат", show_alert=True)
+            return
+        
+        # Запоминаем текст ДО удаления
+        removed_text = quotes[idx]
+        quotes_count_before = len(quotes)
+        
+        # Удаляем
+        if delete_quote(user_id, idx):
+            quotes_count_after = quotes_count_before - 1
+            await callback.message.edit_text(
+                f"✅ Удалено: {removed_text}\n\nОсталось {quotes_count_after} цитат",
+                reply_markup=None
+            )
+            logging.info(f"✅ Quote deleted for user {user_id}: {removed_text}")
+        else:
+            await callback.answer("❌ Не удалось удалить!", show_alert=True)
+            
+    except ValueError as e:
+        logging.error(f"❌ Invalid callback data: {callback.data}")
+        await callback.answer("❌ Ошибка: неверный формат", show_alert=True)
     except Exception as e:
-        logging.error(f"❌ Error deleting quote: {e}")
-        await callback.answer(f"❌ Ошибка: {e}", show_alert=True)
+        logging.error(f"❌ Error in delete_quote_cb: {type(e).__name__}: {e}")
+        await callback.answer(f"❌ Ошибка", show_alert=True)
 
 @dp.callback_query(F.data == "cancel_delete")
 async def cancel_delete(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    if user_id not in ALLOWED_USERS:
-        await callback.answer("❌ Доступ запрещен!", show_alert=True)
-        return
-    await callback.message.edit_text("Отменено ✌️", reply_markup=None)
-
-# 8. ОТСЛЕЖИВАНИЕ ОТНОШЕНИЙ
-@dp.message(F.text == "💕 Отношения")
-async def relationship_menu(message: types.Message):
-    if not await check_access(message):
-        return
-    
-    stats = calculate_relationship_stats()
-    
-    if stats:
-        text = f"""💕 <b>Наши отношения:</b>
-
-<b>Вместе уже:</b>
-🕐 <b>{stats['days']} дней</b>
-📅 <b>{stats['months']} месяцев {stats['days_in_month']} дней</b>
-
-<b>Начало:</b> {stats['formatted_date']}
-"""
-    else:
-        text = """💕 <b>Отношения</b>
-
-Дата начала отношений еще не установлена.
-Хочешь её добавить?
-"""
-    
-    builder = InlineKeyboardBuilder()
-    builder.button(text="📅 Установить дату", callback_data="set_relationship_date")
-    if stats:
-        builder.button(text="✏️ Изменить дату", callback_data="change_relationship_date")
-    builder.button(text="🔙 Назад", callback_data="back_to_menu")
-    builder.adjust(1)
-    
-    await message.answer(text, parse_mode="HTML", reply_markup=builder.as_markup())
-
-@dp.callback_query(F.data == "set_relationship_date")
-async def set_date_start(callback: types.CallbackQuery, state: FSMContext):
-    user_id = callback.from_user.id
-    if user_id not in ALLOWED_USERS:
-        await callback.answer("❌ Доступ запрещен!", show_alert=True)
-        return
-    
-    await state.set_state(MyStates.setting_relationship_date)
-    await callback.message.edit_text(
-        "📅 Напиши дату начала отношений в формате: <b>YYYY-MM-DD</b>\n\n"
-        "Пример: <b>2026-01-28</b>",
-        parse_mode="HTML"
-    )
-
-@dp.callback_query(F.data == "change_relationship_date")
-async def change_date_start(callback: types.CallbackQuery, state: FSMContext):
-    user_id = callback.from_user.id
-    if user_id not in ALLOWED_USERS:
-        await callback.answer("❌ Доступ запрещен!", show_alert=True)
-        return
-    
-    await state.set_state(MyStates.setting_relationship_date)
-    await callback.message.edit_text(
-        "📅 Введи новую дату в формате: <b>YYYY-MM-DD</b>\n\n"
-        "Пример: <b>2026-01-28</b>",
-        parse_mode="HTML"
-    )
-
-@dp.message(MyStates.setting_relationship_date)
-async def save_relationship_date(message: types.Message, state: FSMContext):
-    if not message.text or not message.text.strip():
-        await message.answer("⚠️ Дата не может быть пустой!")
-        return
-    
-    date_str = message.text.strip()
-    
-    if set_relationship_date(date_str):
-        stats = calculate_relationship_stats()
-        await state.clear()
-        text = f"""✅ <b>Дата установлена!</b>
-
-💕 <b>Вместе уже:</b>
-🕐 <b>{stats['days']} дней</b>
-📅 <b>{stats['months']} месяцев {stats['days_in_month']} дней</b>
-
-<b>Начало:</b> {stats['formatted_date']}
-"""
-        await message.answer(text, parse_mode="HTML", reply_markup=main_menu())
-    else:
-        await message.answer("❌ Неверный формат даты! Используй YYYY-MM-DD (например: 2026-01-28)")
-
-# 9. ВОСПОМИНАНИЯ
-@dp.message(F.text == "📸 Воспоминания")
-async def memories_menu(message: types.Message):
-    if not await check_access(message):
-        return
-    
-    memories = get_memories()
-    
-    builder = InlineKeyboardBuilder()
-    builder.button(text="➕ Добавить воспоминание", callback_data="add_memory")
-    if memories:
-        builder.button(text="📖 Посмотреть все", callback_data="view_all_memories")
-        builder.button(text="🗑️ Удалить воспоминание", callback_data="delete_memory_menu")
-    builder.button(text="🔙 Назад", callback_data="back_to_menu")
-    builder.adjust(1)
-    
-    text = f"""📸 <b>Воспоминания</b>
-
-Всего сохранено: <b>{len(memories)} воспоминаний</b>
-"""
-    await message.answer(text, parse_mode="HTML", reply_markup=builder.as_markup())
-
-@dp.callback_query(F.data == "add_memory")
-async def add_memory_start(callback: types.CallbackQuery, state: FSMContext):
-    user_id = callback.from_user.id
-    if user_id not in ALLOWED_USERS:
-        await callback.answer("❌ Доступ запрещен!", show_alert=True)
-        return
-    
-    await state.set_state(MyStates.adding_memory)
-    await callback.message.edit_text("✍️ Напиши воспоминание:")
-
-@dp.message(MyStates.adding_memory)
-async def save_memory_text(message: types.Message, state: FSMContext):
-    if not message.text or not message.text.strip():
-        await message.answer("⚠️ Воспоминание не может быть пустым!")
-        return
-    
-    memory_text = message.text.strip()
-    if len(memory_text) > 1000:
-        await message.answer("⚠️ Воспоминание слишком длинное (макс 1000 символов)")
-        return
-    
-    if add_memory(memory_text):
-        await state.clear()
-        await message.answer("✅ Воспоминание сохранено! 💕", reply_markup=main_menu())
-    else:
-        await message.answer("❌ Ошибка при сохранении воспоминания", reply_markup=main_menu())
-        await state.clear()
-
-@dp.callback_query(F.data == "view_all_memories")
-async def view_all_memories(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    if user_id not in ALLOWED_USERS:
-        await callback.answer("❌ Доступ запрещен!", show_alert=True)
-        return
-    
-    memories = get_memories()
-    if not memories:
-        await callback.answer("Нет воспоминаний!", show_alert=True)
-        return
-    
-    text = "<b>📸 Все воспоминания:</b>\n\n"
-    for i, memory in enumerate(memories, 1):
-        text += f"<b>{i}.</b> <i>{memory['date']}</i>\n{memory['text']}\n\n"
-    
-    await callback.message.edit_text(text, parse_mode="HTML")
-
-@dp.callback_query(F.data == "delete_memory_menu")
-async def delete_memory_menu(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    if user_id not in ALLOWED_USERS:
-        await callback.answer("❌ Доступ запрещен!", show_alert=True)
-        return
-    
-    memories = get_memories()
-    if not memories:
-        await callback.answer("Нет воспоминаний!", show_alert=True)
-        return
-    
-    builder = InlineKeyboardBuilder()
-    for i, memory in enumerate(memories):
-        display_text = memory['text'][:30] + "..." if len(memory['text']) > 30 else memory['text']
-        builder.button(text=f"❌ {display_text}", callback_data=f"del_memory_{i}")
-    builder.button(text="🔙 Назад", callback_data="back_to_menu")
-    builder.adjust(1)
-    
-    await callback.message.edit_text("Какое воспоминание удалить?", reply_markup=builder.as_markup())
-
-@dp.callback_query(F.data.startswith("del_memory_"))
-async def delete_memory_cb(callback: types.CallbackQuery):
+    """Отмена удаления"""
     try:
         user_id = callback.from_user.id
         if user_id not in ALLOWED_USERS:
             await callback.answer("❌ Доступ запрещен!", show_alert=True)
             return
         
-        idx_str = callback.data.rsplit("_", 1)[-1]
-        idx = int(idx_str)
-        
-        memories = get_memories()
-        if 0 <= idx < len(memories):
-            removed = memories[idx]['text'][:50]
-            delete_memory(idx)
-            await callback.message.edit_text(f"✅ Воспоминание удалено\n\nОсталось {len(memories)-1} воспоминаний")
-        else:
-            await callback.answer("❌ Воспоминание не найдено!", show_alert=True)
+        await callback.message.edit_text("Отменено ✌️", reply_markup=None)
+        logging.info(f"❌ Delete operation cancelled by user {user_id}")
     except Exception as e:
-        logging.error(f"❌ Error deleting memory: {e}")
-        await callback.answer(f"❌ Ошибка: {e}", show_alert=True)
-
-@dp.callback_query(F.data == "back_to_menu")
-async def back_to_menu_cb(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    if user_id not in ALLOWED_USERS:
-        await callback.answer("❌ Доступ запрещен!", show_alert=True)
-        return
-    await callback.message.delete()
-
-# --- FALLBACK ОБРАБОТЧИКИ ДЛЯ ЗАБЫТЫХ СОСТОЯНИЙ ---
-@dp.message(MyStates.waiting_for_secret_message)
-async def fallback_secret_message(message: types.Message, state: FSMContext):
-    """Дублируем основной обработчик отправки сообщений"""
-    # Проверяем, что сообщение не пустое
-    if not message.text or not message.text.strip():
-        await message.answer("⚠️ Сообщение не может быть пустым!")
-        return
-    
-    try:
-        data = await state.get_data()
-        sender_id = message.from_user.id
-        sender_name = USER_NAMES.get(sender_id, f"Пользователь {sender_id}")
-        recipient_id = data.get('recipient_id')
-        recipient_name = data.get('recipient', 'unknown')
-        
-        if not recipient_id:
-            await state.clear()
-            await message.answer("❌ Ошибка: получатель не выбран", reply_markup=main_menu())
-            return
-        
-        # Ограничиваем длину сообщения
-        message_text = message.text.strip()
-        if len(message_text) > 2000:
-            await message.answer("⚠️ Сообщение слишком длинное (макс 2000 символов)")
-            return
-        
-        await bot.send_message(
-            recipient_id,
-            f"💌 <b>Тайное сообщение от {sender_name}:</b>\n\n<i>{message_text}</i>",
-            parse_mode="HTML"
-        )
-        await message.answer(f"✅ Сообщение отправлено {recipient_name}!", reply_markup=main_menu())
-    except Exception as e:
-        logging.error(f"❌ Error sending secret message (fallback): {e}")
-        await message.answer(f"❌ Ошибка при отправке сообщения: {e}", reply_markup=main_menu())
-    
-    await state.clear()
+        logging.error(f"❌ Error in cancel_delete: {e}")
+        await callback.answer("❌ Ошибка", show_alert=True)
 
 # --- ОБРАБОТЧИК ДЛЯ НЕИЗВЕСТНЫХ КОМАНД И СООБЩЕНИЙ ---
 @dp.message()
-async def unknown_message(message: types.Message, state: FSMContext):
+async def unknown_message(message: types.Message):
     """Обработчик для всех остальных сообщений"""
-    current_state = await state.get_state()
-    
-    # Если пользователь не в состоянии, то это неизвестная команда
-    if current_state is None:
-        await message.answer("❌ Неизвестная команда. Нажми /start для начала.", reply_markup=main_menu())
-    # Если в состоянии ввода wish
-    elif current_state == MyStates.waiting_for_wish.state:
-        # Уже обработано выше, это fallback
-        pass
-    # Если в состоянии ввода quote
-    elif current_state == MyStates.waiting_for_quote.state:
-        # Уже обработано выше, это fallback
-        pass
+    if not await check_access(message):
+        return
+    await message.answer("❌ Неизвестная команда. Нажми /start для начала.", reply_markup=main_menu())
 
 async def main():
     logging.info("🚀 Bot starting... (v2.1 - fixed error messages)")
