@@ -55,6 +55,8 @@ class MyStates(StatesGroup):
     deleting_quote = State()
     selecting_message_recipient = State()
     waiting_for_secret_message = State()
+    setting_relationship_date = State()
+    adding_memory = State()
 
 # --- РАБОТА С ДАННЫМИ ---
 def get_data(name):
@@ -125,6 +127,94 @@ def delete_quote(user_id, idx):
         return True
     return False
 
+# --- ФУНКЦИИ ОТНОШЕНИЙ И ВОСПОМИНАНИЙ ---
+def get_relationship_date():
+    """Получить дату начала отношений"""
+    data = get_data("relationship")
+    return data.get("start_date", None)
+
+def set_relationship_date(date_str):
+    """Сохранить дату начала отношений (формат: YYYY-MM-DD)"""
+    data = get_data("relationship")
+    data["start_date"] = date_str
+    save_data("relationship", data)
+
+def calculate_relationship_stats():
+    """Рассчитать статистику отношений"""
+    from datetime import datetime
+    start_date_str = get_relationship_date()
+    
+    if not start_date_str:
+        return None
+    
+    try:
+        start_date = datetime.strptime(start_date_str, "%Y-%m-%d")
+        today = datetime.now()
+        delta = today - start_date
+        
+        days = delta.days
+        months = days // 30
+        years = days // 365
+        
+        # Годовщины
+        anniversaries = []
+        if days >= 365:
+            anniversaries.append(f"{years} год(а/ов)")
+        if days >= 30:
+            anniversaries.append(f"{months} месяц(ев)")
+        anniversaries.append(f"{days} дней")
+        
+        return {
+            "days": days,
+            "months": months,
+            "years": years,
+            "start_date": start_date_str,
+            "anniversaries": " • ".join(anniversaries)
+        }
+    except Exception as e:
+        logging.error(f"❌ Error calculating relationship stats: {e}")
+        return None
+
+def add_memory(memory_data):
+    """Добавить воспоминание с текстом и/или файлом"""
+    data = get_data("memories")
+    
+    if "memories" not in data:
+        data["memories"] = []
+    
+    # Каждое воспоминание имеет timestamp, текст и info о файле
+    from datetime import datetime
+    memory_entry = {
+        "timestamp": datetime.now().isoformat(),
+        "text": memory_data.get("text", ""),
+        "file_id": memory_data.get("file_id", None),
+        "file_type": memory_data.get("file_type", None),  # photo, audio, video, document
+        "file_name": memory_data.get("file_name", "")
+    }
+    
+    data["memories"].append(memory_entry)
+    save_data("memories", data)
+    return len(data["memories"])
+
+def get_memories(limit=10):
+    """Получить последние воспоминания"""
+    data = get_data("memories")
+    memories = data.get("memories", [])
+    # Возвращаем последние 'limit' воспоминаний в обратном порядке
+    return list(reversed(memories[-limit:]))
+
+def delete_memory(idx):
+    """Удалить воспоминание по индексу"""
+    data = get_data("memories")
+    memories = data.get("memories", [])
+    
+    if 0 <= idx < len(memories):
+        memories.pop(idx)
+        data["memories"] = memories
+        save_data("memories", data)
+        return True
+    return False
+
 # --- ГЛАВНОЕ МЕНЮ ---
 def main_menu():
     builder = ReplyKeyboardBuilder()
@@ -134,7 +224,9 @@ def main_menu():
     builder.button(text="🤖 Спросить ИИ")
     builder.button(text="💌 Тайное сообщение")
     builder.button(text="📂 Посмотреть списки")
-    builder.button(text="🗑️ Удалить элемент")
+    builder.button(text="� Отношения")
+    builder.button(text="📸 Воспоминания")
+    builder.button(text="�🗑️ Удалить элемент")
     builder.adjust(2)
     return builder.as_markup(resize_keyboard=True, one_time_keyboard=False)
 
@@ -724,6 +816,264 @@ async def cancel_delete(callback: types.CallbackQuery):
     except Exception as e:
         logging.error(f"❌ Error in cancel_delete: {e}")
         await callback.answer("❌ Ошибка", show_alert=True)
+
+# 8. ОТНОШЕНИЯ И ГОДОВЩИНЫ
+@dp.message(F.text == "💕 Отношения")
+async def show_relationship_menu(message: types.Message):
+    """Показывает меню отношений"""
+    if not await check_access(message):
+        return
+    
+    try:
+        stats = calculate_relationship_stats()
+        
+        if stats:
+            # Если дата уже установлена, показываем статистику
+            text = f"""💕 <b>НАШИ ОТНОШЕНИЯ</b> 💕
+
+📅 Дата начала: <b>{stats['start_date']}</b>
+
+🎉 <b>Статистика:</b>
+   {stats['anniversaries']}
+
+Это чудесное путешествие длится уже столько времени вместе! ❤️"""
+            
+            builder = InlineKeyboardBuilder()
+            builder.button(text="📝 Изменить дату", callback_data="edit_relationship_date")
+            builder.button(text="📸 Добавить воспоминание", callback_data="add_memory_button")
+            builder.button(text="📂 Все воспоминания", callback_data="show_all_memories")
+            builder.button(text="🔙 Назад", callback_data="back_to_menu")
+            builder.adjust(1)
+            
+            await message.answer(text, parse_mode="HTML", reply_markup=builder.as_markup())
+            logging.info(f"💕 Relationship stats shown to user {message.from_user.id}")
+        else:
+            # Если дата не установлена, предлагаем ее добавить
+            text = "💕 <b>Отношения не установлены!</b>\n\nДавай установим дату начала наших отношений?"
+            builder = InlineKeyboardBuilder()
+            builder.button(text="✏️ Установить дату", callback_data="set_relationship_date")
+            builder.button(text="🔙 Назад", callback_data="back_to_menu")
+            builder.adjust(1)
+            
+            await message.answer(text, parse_mode="HTML", reply_markup=builder.as_markup())
+            logging.info(f"💕 Relationship setup prompt shown to user {message.from_user.id}")
+    except Exception as e:
+        logging.error(f"❌ Error in show_relationship_menu: {e}")
+        await message.answer("❌ Ошибка", reply_markup=main_menu())
+
+@dp.callback_query(F.data == "set_relationship_date")
+async def set_relationship_date_cb(callback: types.CallbackQuery, state: FSMContext):
+    """Начало установки даты отношений"""
+    try:
+        await state.set_state(MyStates.setting_relationship_date)
+        await callback.message.edit_text(
+            "📅 Напиши дату начала отношений в формате: <b>YYYY-MM-DD</b>\n\nНапример: <b>2023-06-15</b>",
+            parse_mode="HTML"
+        )
+        logging.info(f"📅 Awaiting relationship date from user {callback.from_user.id}")
+    except Exception as e:
+        logging.error(f"❌ Error in set_relationship_date_cb: {e}")
+        await callback.answer("❌ Ошибка", show_alert=True)
+
+@dp.message(MyStates.setting_relationship_date)
+async def save_relationship_date(message: types.Message, state: FSMContext):
+    """Сохранение даты отношений"""
+    try:
+        date_text = message.text.strip()
+        
+        # Проверяем формат YYYY-MM-DD
+        from datetime import datetime
+        try:
+            datetime.strptime(date_text, "%Y-%m-%d")
+        except ValueError:
+            await message.answer("❌ Неверный формат! Используй: YYYY-MM-DD (например, 2023-06-15)")
+            return
+        
+        set_relationship_date(date_text)
+        await state.clear()
+        
+        stats = calculate_relationship_stats()
+        text = f"""✅ <b>Дата установлена!</b>
+
+💕 Наши отношения:
+📅 {stats['start_date']}
+
+🎉 Статистика:
+   {stats['anniversaries']}"""
+        
+        await message.answer(text, parse_mode="HTML", reply_markup=main_menu())
+        logging.info(f"✅ Relationship date set for user {message.from_user.id}: {date_text}")
+    except Exception as e:
+        logging.error(f"❌ Error in save_relationship_date: {e}")
+        await message.answer("❌ Ошибка при сохранении даты", reply_markup=main_menu())
+        await state.clear()
+
+@dp.callback_query(F.data == "edit_relationship_date")
+async def edit_relationship_date_cb(callback: types.CallbackQuery, state: FSMContext):
+    """Редактирование даты отношений"""
+    try:
+        await state.set_state(MyStates.setting_relationship_date)
+        await callback.message.edit_text(
+            "📅 Напиши новую дату в формате: <b>YYYY-MM-DD</b>",
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        logging.error(f"❌ Error in edit_relationship_date_cb: {e}")
+        await callback.answer("❌ Ошибка", show_alert=True)
+
+# 9. ВОСПОМИНАНИЯ
+@dp.callback_query(F.data == "add_memory_button")
+async def add_memory_button(callback: types.CallbackQuery, state: FSMContext):
+    """Начало добавления воспоминания"""
+    try:
+        await state.set_state(MyStates.adding_memory)
+        await callback.message.edit_text(
+            "📸 Поделись воспоминанием!\n\nМожешь:\n• Написать текст\n• Отправить фото\n• Отправить видео\n• Отправить аудио\n• Отправить документ\n\nОтправь свое воспоминание:",
+            parse_mode="HTML"
+        )
+        logging.info(f"📸 Memory adding started for user {callback.from_user.id}")
+    except Exception as e:
+        logging.error(f"❌ Error in add_memory_button: {e}")
+        await callback.answer("❌ Ошибка", show_alert=True)
+
+@dp.message(MyStates.adding_memory)
+async def save_memory(message: types.Message, state: FSMContext):
+    """Сохранение воспоминания"""
+    try:
+        memory_data = {}
+        
+        # Обрабатываем разные типы контента
+        if message.photo:
+            memory_data["file_id"] = message.photo[-1].file_id
+            memory_data["file_type"] = "photo"
+            memory_data["text"] = message.caption or ""
+            content_type = "📸 фото"
+        elif message.video:
+            memory_data["file_id"] = message.video.file_id
+            memory_data["file_type"] = "video"
+            memory_data["file_name"] = message.video.file_name or "video"
+            memory_data["text"] = message.caption or ""
+            content_type = "🎥 видео"
+        elif message.audio:
+            memory_data["file_id"] = message.audio.file_id
+            memory_data["file_type"] = "audio"
+            memory_data["file_name"] = message.audio.file_name or "audio"
+            memory_data["text"] = message.caption or ""
+            content_type = "🎵 аудио"
+        elif message.document:
+            memory_data["file_id"] = message.document.file_id
+            memory_data["file_type"] = "document"
+            memory_data["file_name"] = message.document.file_name or "document"
+            memory_data["text"] = message.caption or ""
+            content_type = "📄 документ"
+        elif message.text:
+            memory_data["text"] = message.text.strip()
+            content_type = "✍️ текст"
+        else:
+            await message.answer("⚠️ Неподдерживаемый тип контента. Отправь текст, фото, видео, аудио или документ.")
+            return
+        
+        # Сохраняем воспоминание
+        memory_id = add_memory(memory_data)
+        await state.clear()
+        
+        await message.answer(
+            f"✅ Воспоминание сохранено! 💕\n\nТип: {content_type}\nВсего воспоминаний: {memory_id}",
+            reply_markup=main_menu()
+        )
+        logging.info(f"✅ Memory added for user {message.from_user.id}: type={memory_data.get('file_type', 'text')}")
+    except Exception as e:
+        logging.error(f"❌ Error in save_memory: {e}")
+        await message.answer("❌ Ошибка при сохранении воспоминания", reply_markup=main_menu())
+        await state.clear()
+
+@dp.callback_query(F.data == "show_all_memories")
+async def show_all_memories(callback: types.CallbackQuery):
+    """Показать все воспоминания"""
+    try:
+        memories = get_memories(limit=50)
+        
+        if not memories:
+            await callback.answer("У вас еще нет воспоминаний 😢", show_alert=True)
+            return
+        
+        # Формируем текст со всеми воспоминаниями
+        text = f"📸 <b>ВСЕ ВОСПОМИНАНИЯ ({len(memories)} шт.)</b> 📸\n\n"
+        
+        for i, memory in enumerate(memories, 1):
+            from datetime import datetime
+            try:
+                date = datetime.fromisoformat(memory["timestamp"]).strftime("%d.%m.%Y %H:%M")
+            except:
+                date = "Unknown"
+            
+            file_type = memory.get("file_type", "text")
+            text_preview = memory.get("text", "")[:50]
+            
+            if file_type == "photo":
+                emoji = "📸"
+            elif file_type == "video":
+                emoji = "🎥"
+            elif file_type == "audio":
+                emoji = "🎵"
+            elif file_type == "document":
+                emoji = "📄"
+            else:
+                emoji = "✍️"
+            
+            text += f"{i}. {emoji} <b>{date}</b>"
+            if text_preview:
+                text += f"\n   <i>{text_preview}...</i>"
+            text += "\n\n"
+        
+        # Если много воспоминаний, отправляем как обычное сообщение
+        if len(text) > 4000:
+            await callback.message.edit_text("⏳ Загружаю воспоминания...")
+            # Отправляем порциями
+            for i in range(0, len(memories), 5):
+                chunk_memories = memories[i:i+5]
+                chunk_text = f"📸 <b>ВОСПОМИНАНИЯ (часть {i//5 + 1})</b> 📸\n\n"
+                for j, memory in enumerate(chunk_memories, i+1):
+                    try:
+                        date = datetime.fromisoformat(memory["timestamp"]).strftime("%d.%m.%Y %H:%M")
+                    except:
+                        date = "Unknown"
+                    
+                    file_type = memory.get("file_type", "text")
+                    emoji = {"photo": "📸", "video": "🎥", "audio": "🎵", "document": "📄"}.get(file_type, "✍️")
+                    text_preview = memory.get("text", "")[:30]
+                    
+                    chunk_text += f"{j}. {emoji} <b>{date}</b>"
+                    if text_preview:
+                        chunk_text += f"\n   <i>{text_preview}</i>"
+                    chunk_text += "\n\n"
+                
+                await bot.send_message(callback.from_user.id, chunk_text, parse_mode="HTML")
+        else:
+            await callback.message.edit_text(text, parse_mode="HTML")
+        
+        logging.info(f"📂 All memories shown to user {callback.from_user.id}")
+    except Exception as e:
+        logging.error(f"❌ Error in show_all_memories: {e}")
+        await callback.answer("❌ Ошибка при загрузке воспоминаний", show_alert=True)
+
+@dp.callback_query(F.data == "back_to_menu")
+async def back_to_menu(callback: types.CallbackQuery, state: FSMContext):
+    """Вернуться в главное меню"""
+    try:
+        await state.clear()
+        await callback.message.delete()
+        builder = ReplyKeyboardBuilder()
+        builder.button(text="✨ Факт про Майю")
+        builder.button(text="🎁 В виш-лист")
+        builder.adjust(2)
+        await bot.send_message(
+            callback.from_user.id,
+            "Вернулась в главное меню! 🏠",
+            reply_markup=main_menu()
+        )
+    except Exception as e:
+        logging.error(f"❌ Error in back_to_menu: {e}")
 
 # --- ОБРАБОТЧИК ДЛЯ НЕИЗВЕСТНЫХ КОМАНД И СООБЩЕНИЙ ---
 @dp.message()
