@@ -5,7 +5,7 @@ nixPkgs = ["python313"]
 cmds = ["pip install -r requirements.txt"]
 
 [start]
-cmd = "python3 main.py"
+cmd = "python3 run.py"
 
 [phases.build]
-cmds = ["echo 'Build v3.2.1 - cache bust'"]
+cmds = ["echo 'Build v4.0.0 - Mini App'"]

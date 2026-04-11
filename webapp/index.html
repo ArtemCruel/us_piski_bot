@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Piska Bot</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div id="app">
+        <!-- Верхний хедер -->
+        <header class="header">
+            <div class="header-title">
+                <span class="header-emoji">💕</span>
+                <span>Наш Бот</span>
+            </div>
+            <div class="header-subtitle" id="relationship-counter">Загрузка...</div>
+        </header>
+
+        <!-- Контент (переключается табами) -->
+        <main class="content" id="content">
+            <!-- Заполняется через JS -->
+        </main>
+
+        <!-- Нижняя навигация -->
+        <nav class="tab-bar">
+            <button class="tab active" data-tab="home" onclick="switchTab('home')">
+                <span class="tab-icon">🏠</span>
+                <span class="tab-label">Главная</span>
+            </button>
+            <button class="tab" data-tab="memories" onclick="switchTab('memories')">
+                <span class="tab-icon">📸</span>
+                <span class="tab-label">Память</span>
+            </button>
+            <button class="tab" data-tab="wishlist" onclick="switchTab('wishlist')">
+                <span class="tab-icon">🎁</span>
+                <span class="tab-label">Вишлист</span>
+            </button>
+            <button class="tab" data-tab="quotes" onclick="switchTab('quotes')">
+                <span class="tab-icon">🤣</span>
+                <span class="tab-label">Цитаты</span>
+            </button>
+            <button class="tab" data-tab="ai" onclick="switchTab('ai')">
+                <span class="tab-icon">🤖</span>
+                <span class="tab-label">ИИ</span>
+            </button>
+        </nav>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
