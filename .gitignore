@@ -17,11 +17,8 @@ env/
 *.swp
 *.swo
 
-# Bot data
-wishlist.json
-quotes.json
-relationship.json
-memories.json
+# Bot data — хранятся в репо как начальный бэкап
+# На Railway данные живут в Volume (/data), не теряются при деплое
 
 # Allow config
 !railway.json

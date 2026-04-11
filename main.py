@@ -21,6 +21,12 @@ logging.basicConfig(level=logging.INFO)
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
 OPENROUTER_KEY = os.getenv("OPENROUTER_KEY", "")
 
+# --- ПАПКА ДЛЯ ДАННЫХ (для Railway Volume → DATA_DIR=/data) ---
+DATA_DIR = os.getenv("DATA_DIR", "")
+if DATA_DIR:
+    os.makedirs(DATA_DIR, exist_ok=True)
+    logging.info(f"📁 DATA_DIR set: {DATA_DIR}")
+
 # --- БЕЛЫЙ СПИСОК ПОЛЬЗОВАТЕЛЕЙ (разрешены только эти user_id) ---
 ALLOWED_USERS = [
     7118929376,   # Artem личный тема
@@ -65,25 +71,34 @@ class MyStates(StatesGroup):
 # ============================================================
 #                     РАБОТА С ДАННЫМИ
 # ============================================================
+def _data_path(name):
+    """Получить полный путь к JSON файлу данных"""
+    if DATA_DIR:
+        return os.path.join(DATA_DIR, f"{name}.json")
+    return f"{name}.json"
+
+
 def get_data(name):
     """Получить все данные из JSON файла"""
+    path = _data_path(name)
     try:
-        with open(f"{name}.json", "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
     except FileNotFoundError:
         return {}
     except json.JSONDecodeError:
-        logging.error(f"❌ JSON corrupted in {name}.json, returning empty dict")
+        logging.error(f"❌ JSON corrupted in {path}, returning empty dict")
         return {}
 
 
 def save_data(name, data):
     """Сохранить данные в JSON файл"""
+    path = _data_path(name)
     try:
-        with open(f"{name}.json", "w", encoding="utf-8") as f:
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=4)
     except IOError as e:
-        logging.error(f"❌ Failed to save {name}.json: {e}")
+        logging.error(f"❌ Failed to save {path}: {e}")
         raise
 
 
@@ -658,6 +673,7 @@ async def delete_menu(message: types.Message, state: FSMContext):
         builder = InlineKeyboardBuilder()
         builder.button(text="🎁 Удалить из виш-листа", callback_data="delete_wish_menu")
         builder.button(text="🤣 Удалить из цитат", callback_data="delete_quote_menu")
+        builder.button(text="📸 Удалить воспоминание", callback_data="delete_memory_menu")
         builder.button(text="❌ Отмена", callback_data="cancel_delete")
         builder.adjust(1)
         await message.answer("Что удаляем?", reply_markup=builder.as_markup())
@@ -773,6 +789,76 @@ async def delete_quote_cb(callback: types.CallbackQuery):
         await callback.answer("❌ Неверный формат", show_alert=True)
     except Exception as e:
         logging.error(f"❌ Error in delete_quote_cb: {e}")
+        await callback.answer("❌ Ошибка", show_alert=True)
+
+
+@dp.callback_query(F.data == "delete_memory_menu")
+async def show_memories_to_delete(callback: types.CallbackQuery):
+    try:
+        user_id = callback.from_user.id
+        if user_id not in ALLOWED_USERS:
+            await callback.answer("❌ Доступ запрещен!", show_alert=True)
+            return
+
+        data = get_data("memories")
+        memories = data.get("memories", [])
+        if not memories:
+            await callback.answer("Нет воспоминаний!", show_alert=True)
+            return
+
+        builder = InlineKeyboardBuilder()
+        for i, mem in enumerate(memories):
+            text_preview = mem.get("text", "")
+            file_type = mem.get("file_type", "")
+            if text_preview:
+                label = text_preview[:35] + "..." if len(text_preview) > 35 else text_preview
+            elif file_type:
+                type_emoji = {"photo": "🖼️", "video": "🎬", "document": "📄", "voice": "🎤", "video_note": "🔵"}.get(file_type, "📎")
+                label = f"{type_emoji} {file_type} #{i+1}"
+            else:
+                label = f"Воспоминание #{i+1}"
+            builder.button(text=f"❌ {label}", callback_data=f"del_mem_{i}")
+        builder.button(text="🔙 Назад", callback_data="cancel_delete")
+        builder.adjust(1)
+
+        await callback.message.edit_text("Какое воспоминание удалить?", reply_markup=builder.as_markup())
+    except Exception as e:
+        logging.error(f"❌ Error in show_memories_to_delete: {e}")
+        await callback.answer("❌ Ошибка", show_alert=True)
+
+
+@dp.callback_query(F.data.startswith("del_mem_"))
+async def delete_memory_cb(callback: types.CallbackQuery):
+    try:
+        user_id = callback.from_user.id
+        if user_id not in ALLOWED_USERS:
+            await callback.answer("❌ Доступ запрещен!", show_alert=True)
+            return
+
+        idx = int(callback.data.split("del_mem_")[1])
+        data = get_data("memories")
+        memories = data.get("memories", [])
+
+        if not (0 <= idx < len(memories)):
+            await callback.answer("❌ Не найдено!", show_alert=True)
+            return
+
+        removed = memories[idx]
+        preview = removed.get("text", "") or removed.get("file_type", "файл")
+        if len(preview) > 40:
+            preview = preview[:40] + "..."
+
+        if delete_memory(idx):
+            remaining = len(memories) - 1
+            await callback.message.edit_text(
+                f"✅ Удалено воспоминание: {preview}\n\nОсталось {remaining} воспоминаний"
+            )
+        else:
+            await callback.answer("❌ Не удалось удалить!", show_alert=True)
+    except ValueError:
+        await callback.answer("❌ Неверный формат", show_alert=True)
+    except Exception as e:
+        logging.error(f"❌ Error in delete_memory_cb: {e}")
         await callback.answer("❌ Ошибка", show_alert=True)
 
 
@@ -985,25 +1071,65 @@ async def show_all_memories(callback: types.CallbackQuery):
             await callback.answer("Нет воспоминаний 😢", show_alert=True)
             return
 
+        await callback.answer()
+
         type_emoji = {"photo": "📸", "video": "🎥", "audio": "🎵", "document": "📄"}
-        text = f"📸 <b>ВОСПОМИНАНИЯ ({len(memories)} шт.)</b>\n\n"
+        header = f"📸 <b>ВОСПОМИНАНИЯ ({len(memories)} шт.)</b>\n"
+        await callback.message.edit_text(header, parse_mode="HTML")
 
         for i, m in enumerate(memories, 1):
             try:
                 date = datetime.fromisoformat(m["timestamp"]).strftime("%d.%m.%Y %H:%M")
             except Exception:
                 date = "—"
+
             emoji = type_emoji.get(m.get("file_type"), "✍️")
-            preview = m.get("text", "")[:50]
-            text += f"{i}. {emoji} <b>{date}</b>"
+            preview = m.get("text", "")
+            file_id = m.get("file_id")
+            file_type = m.get("file_type")
+            caption = f"{emoji} <b>#{i}</b> — {date}"
             if preview:
-                text += f"\n   <i>{preview}</i>"
-            text += "\n\n"
+                caption += f"\n{preview}"
 
-        if len(text) > 4000:
-            text = text[:3990] + "\n\n<i>… ещё</i>"
+            try:
+                if file_id and file_type == "photo":
+                    await bot.send_photo(
+                        callback.message.chat.id, file_id,
+                        caption=caption, parse_mode="HTML"
+                    )
+                elif file_id and file_type == "video":
+                    await bot.send_video(
+                        callback.message.chat.id, file_id,
+                        caption=caption, parse_mode="HTML"
+                    )
+                elif file_id and file_type == "audio":
+                    await bot.send_audio(
+                        callback.message.chat.id, file_id,
+                        caption=caption, parse_mode="HTML"
+                    )
+                elif file_id and file_type == "document":
+                    await bot.send_document(
+                        callback.message.chat.id, file_id,
+                        caption=caption, parse_mode="HTML"
+                    )
+                else:
+                    # Текстовое воспоминание
+                    await bot.send_message(
+                        callback.message.chat.id,
+                        f"{emoji} <b>#{i}</b> — {date}\n\n{preview}",
+                        parse_mode="HTML"
+                    )
+            except Exception as send_err:
+                logging.error(f"❌ Error sending memory #{i}: {send_err}")
+                await bot.send_message(
+                    callback.message.chat.id,
+                    f"{emoji} <b>#{i}</b> — {date}\n⚠️ Не удалось загрузить файл\n{preview}",
+                    parse_mode="HTML"
+                )
 
-        await callback.message.edit_text(text, parse_mode="HTML")
+            # Небольшая пауза чтобы не спамить Telegram API
+            await asyncio.sleep(0.3)
+
     except Exception as e:
         logging.error(f"❌ Error in show_all_memories: {e}")
         await callback.answer("❌ Ошибка", show_alert=True)
@@ -1060,9 +1186,31 @@ async def unknown_message(message: types.Message, state: FSMContext):
 # ============================================================
 #                        ЗАПУСК
 # ============================================================
-BOT_VERSION = "3.2.1"
+BOT_VERSION = "3.3.0"
+
+
+def init_data_files():
+    """При первом запуске на Railway с Volume: копируем начальные данные из репо в DATA_DIR,
+    если файлов там ещё нет. Существующие файлы НЕ перезаписываются."""
+    if not DATA_DIR:
+        return  # Локально — файлы рядом с main.py, копировать не нужно
+
+    import shutil
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    data_files = ["wishlist.json", "quotes.json", "relationship.json", "memories.json"]
+
+    for fname in data_files:
+        dest = os.path.join(DATA_DIR, fname)
+        src = os.path.join(script_dir, fname)
+        if not os.path.exists(dest) and os.path.exists(src):
+            shutil.copy2(src, dest)
+            logging.info(f"📋 Copied initial data: {fname} → {DATA_DIR}")
+        elif os.path.exists(dest):
+            logging.info(f"✅ Data exists, keeping: {dest}")
+
 
 async def main():
+    init_data_files()
     logging.info(f"🚀 Bot starting... v{BOT_VERSION}")
     try:
         await dp.start_polling(bot)
