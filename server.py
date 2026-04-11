@@ -70,24 +70,27 @@ def save_data(name, data):
 def validate_init_data(init_data_raw: str) -> dict | None:
     """Проверяет подпись Telegram WebApp initData. Возвращает данные пользователя или None."""
     if not init_data_raw or not TELEGRAM_TOKEN:
+        logging.warning("⚠️ initData validation: empty initData or token")
         return None
 
     try:
-        parsed = parse_qs(init_data_raw)
-        hash_value = parsed.get("hash", [None])[0]
-        if not hash_value:
-            return None
+        from urllib.parse import unquote, parse_qsl
 
-        # Проверяем auth_date (не старше 24 часов)
-        auth_date = int(parsed.get("auth_date", [0])[0])
-        if time.time() - auth_date > 86400:
-            return None
-
-        # Собираем data-check-string
+        # parse_qsl даёт список пар (key, value), а не массивы как parse_qs
+        pairs = parse_qsl(init_data_raw, keep_blank_values=True)
+        hash_value = None
         data_pairs = []
-        for key, values in sorted(parsed.items()):
-            if key != "hash":
-                data_pairs.append(f"{key}={values[0]}")
+
+        for key, value in sorted(pairs, key=lambda x: x[0]):
+            if key == "hash":
+                hash_value = value
+            else:
+                data_pairs.append(f"{key}={value}")
+
+        if not hash_value:
+            logging.warning("⚠️ initData: no hash found")
+            return None
+
         data_check_string = "\n".join(data_pairs)
 
         # Проверяем HMAC
@@ -95,13 +98,18 @@ def validate_init_data(init_data_raw: str) -> dict | None:
         computed_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
 
         if computed_hash != hash_value:
+            logging.warning(f"⚠️ initData: hash mismatch")
             return None
 
         # Парсим user
-        user_raw = parsed.get("user", [None])[0]
+        user_data = dict(pairs)
+        user_raw = user_data.get("user")
         if user_raw:
             user = json.loads(user_raw)
+            logging.info(f"✅ initData validated: user_id={user.get('id')}")
             return user
+
+        logging.warning("⚠️ initData: no user field")
         return None
     except Exception as e:
         logging.error(f"❌ initData validation error: {e}")
@@ -109,16 +117,27 @@ def validate_init_data(init_data_raw: str) -> dict | None:
 
 
 def get_user_id(request) -> int | None:
-    """Извлекает user_id из заголовка Telegram initData."""
+    """Извлекает user_id из заголовка Telegram initData или query param uid."""
+    # 1) Telegram WebApp initData (реальный Telegram)
     init_data = request.headers.get("X-Telegram-Init-Data", "")
     if init_data:
         user = validate_init_data(init_data)
         if user and user.get("id") in ALLOWED_USERS:
             return user["id"]
-    # Для отладки без Telegram — берём из query
+        logging.warning(f"⚠️ initData present but invalid or user not allowed")
+
+    # 2) Fallback: uid из Telegram WebApp user (передаётся через JS)
+    #    или debug ?uid= параметр
     debug_uid = request.query.get("uid")
-    if debug_uid and int(debug_uid) in ALLOWED_USERS:
-        return int(debug_uid)
+    if debug_uid:
+        try:
+            uid_int = int(debug_uid)
+            if uid_int in ALLOWED_USERS:
+                return uid_int
+        except ValueError:
+            pass
+
+    logging.warning(f"⚠️ No valid auth found. Headers: {dict(request.headers)}, Query: {dict(request.query)}")
     return None
 
 
@@ -126,14 +145,24 @@ def get_user_id(request) -> int | None:
 #                    API HANDLERS
 # ============================================================
 
-# --- WISHES ---
+# --- WISHES (общие для всех!) ---
 async def api_get_wishes(request):
     uid = get_user_id(request)
     if not uid:
         return web.json_response({"error": "unauthorized"}, status=401)
     data = get_data("wishlist")
-    wishes = data.get(str(uid), [])
-    return web.json_response({"data": wishes})
+    # Собираем хотелки ВСЕХ пользователей с именами авторов
+    all_wishes = []
+    for user_id_str, wishes in data.items():
+        author = USER_NAMES.get(int(user_id_str), "?")
+        for w in wishes:
+            if isinstance(w, str):
+                all_wishes.append({"text": w, "author": author, "uid": user_id_str})
+            elif isinstance(w, dict):
+                w["author"] = w.get("author", author)
+                w["uid"] = user_id_str
+                all_wishes.append(w)
+    return web.json_response({"data": all_wishes, "my_uid": str(uid)})
 
 
 async def api_add_wish(request):
@@ -158,23 +187,32 @@ async def api_delete_wish(request):
     if not uid:
         return web.json_response({"error": "unauthorized"}, status=401)
     idx = int(request.match_info["idx"])
+    owner = request.query.get("owner", str(uid))
     data = get_data("wishlist")
-    key = str(uid)
-    if key in data and 0 <= idx < len(data[key]):
-        data[key].pop(idx)
+    if owner in data and 0 <= idx < len(data[owner]):
+        data[owner].pop(idx)
         save_data("wishlist", data)
         return web.json_response({"ok": True})
     return web.json_response({"error": "not found"}, status=404)
 
 
-# --- QUOTES ---
+# --- QUOTES (общие для всех!) ---
 async def api_get_quotes(request):
     uid = get_user_id(request)
     if not uid:
         return web.json_response({"error": "unauthorized"}, status=401)
     data = get_data("quotes")
-    quotes = data.get(str(uid), [])
-    return web.json_response({"data": quotes})
+    all_quotes = []
+    for user_id_str, quotes in data.items():
+        author = USER_NAMES.get(int(user_id_str), "?")
+        for q in quotes:
+            if isinstance(q, str):
+                all_quotes.append({"text": q, "author": author, "uid": user_id_str})
+            elif isinstance(q, dict):
+                q["author"] = q.get("author", author)
+                q["uid"] = user_id_str
+                all_quotes.append(q)
+    return web.json_response({"data": all_quotes, "my_uid": str(uid)})
 
 
 async def api_add_quote(request):
@@ -199,10 +237,10 @@ async def api_delete_quote(request):
     if not uid:
         return web.json_response({"error": "unauthorized"}, status=401)
     idx = int(request.match_info["idx"])
+    owner = request.query.get("owner", str(uid))
     data = get_data("quotes")
-    key = str(uid)
-    if key in data and 0 <= idx < len(data[key]):
-        data[key].pop(idx)
+    if owner in data and 0 <= idx < len(data[owner]):
+        data[owner].pop(idx)
         save_data("quotes", data)
         return web.json_response({"ok": True})
     return web.json_response({"error": "not found"}, status=404)
@@ -217,7 +255,7 @@ async def api_get_memories(request):
     memories = data.get("memories", [])
     # Добавляем URL для фото (через Telegram Bot API getFile)
     for m in memories:
-        if m.get("file_id") and m.get("file_type") == "photo":
+        if m.get("file_id"):
             m["file_url"] = f"/api/file/{m['file_id']}"
     return web.json_response({"data": list(reversed(memories[-50:]))})
 
@@ -355,9 +393,12 @@ async def api_ai(request):
         }
         try:
             resp = http_requests.post(OPENROUTER_URL, headers=headers, json=payload, timeout=30)
+            logging.info(f"🤖 AI response status: {resp.status_code}")
             if resp.status_code == 200:
                 result = resp.json()
                 return result["choices"][0]["message"]["content"]
+            else:
+                logging.error(f"🤖 AI error response: {resp.text[:500]}")
         except Exception as e:
             logging.error(f"AI error: {e}")
         return None
@@ -365,7 +406,7 @@ async def api_ai(request):
     reply = await asyncio.to_thread(sync_ai)
     if reply:
         return web.json_response({"reply": reply})
-    return web.json_response({"error": "ai_error"}, status=500)
+    return web.json_response({"error": "ai_error", "detail": "OpenRouter API failed"}, status=500)
 
 
 # --- FACT ---
@@ -388,8 +429,11 @@ async def api_fact(request):
         }
         try:
             resp = http_requests.post(OPENROUTER_URL, headers=headers, json=payload, timeout=30)
+            logging.info(f"✨ Fact response status: {resp.status_code}")
             if resp.status_code == 200:
                 return resp.json()["choices"][0]["message"]["content"]
+            else:
+                logging.error(f"✨ Fact error response: {resp.text[:500]}")
         except Exception as e:
             logging.error(f"Fact error: {e}")
         return None
@@ -397,7 +441,7 @@ async def api_fact(request):
     fact = await asyncio.to_thread(sync_fact)
     if fact:
         return web.json_response({"fact": fact})
-    return web.json_response({"error": "ai_error"}, status=500)
+    return web.json_response({"error": "ai_error", "detail": "OpenRouter API failed"}, status=500)
 
 
 # --- SECRET MESSAGE ---
@@ -412,15 +456,23 @@ async def api_secret(request):
         return web.json_response({"error": "missing data"}, status=400)
 
     try:
-        from aiogram import Bot
-        bot = Bot(token=TELEGRAM_TOKEN)
-        await bot.send_message(
-            to_user_id,
-            f"💌 <b>Тебе тайное сообщение!</b>\n\n{text}",
-            parse_mode="HTML"
+        # Отправляем через Telegram Bot API напрямую (без создания нового бота)
+        sender_name = USER_NAMES.get(uid, "Кто-то")
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        payload = {
+            "chat_id": to_user_id,
+            "text": f"💌 <b>Тебе тайное сообщение!</b>\n\n{text}",
+            "parse_mode": "HTML",
+        }
+        resp = await asyncio.to_thread(
+            lambda: http_requests.post(url, json=payload, timeout=10)
         )
-        await bot.session.close()
-        return web.json_response({"ok": True})
+        if resp.status_code == 200:
+            logging.info(f"💌 Secret message from {uid} to {to_user_id}")
+            return web.json_response({"ok": True})
+        else:
+            logging.error(f"Secret message API error: {resp.status_code} {resp.text}")
+            return web.json_response({"error": "telegram_error"}, status=500)
     except Exception as e:
         logging.error(f"Secret message error: {e}")
         return web.json_response({"error": str(e)}, status=500)
@@ -428,7 +480,10 @@ async def api_secret(request):
 
 # --- FILE PROXY (для отображения фото из Telegram) ---
 async def api_get_file(request):
+    """Проксирует файлы из Telegram. Не требует auth (URL не угадать)."""
     file_id = request.match_info["file_id"]
+    if not TELEGRAM_TOKEN:
+        return web.Response(status=503, text="Bot token not configured")
     try:
         # Получаем путь к файлу через Telegram Bot API
         resp = http_requests.get(
@@ -463,8 +518,25 @@ async def api_get_file(request):
 # ============================================================
 #                   WEB SERVER
 # ============================================================
+
+@web.middleware
+async def cors_middleware(request, handler):
+    """Добавляем CORS заголовки для Telegram WebApp."""
+    if request.method == 'OPTIONS':
+        response = web.Response(status=200)
+    else:
+        try:
+            response = await handler(request)
+        except web.HTTPException as ex:
+            response = ex
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, DELETE, OPTIONS'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, X-Telegram-Init-Data'
+    return response
+
+
 def create_app():
-    app = web.Application()
+    app = web.Application(middlewares=[cors_middleware])
 
     # API routes
     app.router.add_get('/api/wishes', api_get_wishes)

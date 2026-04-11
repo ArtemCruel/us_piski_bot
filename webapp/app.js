@@ -4,23 +4,32 @@
    ============================================ */
 
 // --- Telegram WebApp SDK ---
-const tg = window.Telegram?.WebApp;
-if (tg) {
-    tg.ready();
-    tg.expand();
-    tg.enableClosingConfirmation();
-    // Адаптируем цвета под тему Telegram
-    document.documentElement.style.setProperty('--bg-primary', tg.themeParams.bg_color || '#1a1a2e');
-    document.documentElement.style.setProperty('--bg-secondary', tg.themeParams.secondary_bg_color || '#16213e');
-    document.documentElement.style.setProperty('--text-primary', tg.themeParams.text_color || '#ffffff');
-    document.documentElement.style.setProperty('--text-secondary', tg.themeParams.hint_color || '#8892b0');
+let tg = null;
+try {
+    tg = window.Telegram?.WebApp;
+    if (tg) {
+        tg.ready();
+        tg.expand();
+        tg.enableClosingConfirmation();
+        // Адаптируем цвета под тему Telegram
+        if (tg.themeParams) {
+            document.documentElement.style.setProperty('--bg-primary', tg.themeParams.bg_color || '#1a1a2e');
+            document.documentElement.style.setProperty('--bg-secondary', tg.themeParams.secondary_bg_color || '#16213e');
+            document.documentElement.style.setProperty('--text-primary', tg.themeParams.text_color || '#ffffff');
+            document.documentElement.style.setProperty('--text-secondary', tg.themeParams.hint_color || '#8892b0');
+        }
+    }
+} catch (e) {
+    console.warn('Telegram WebApp SDK not available:', e);
 }
 
 // --- API BASE URL ---
 const API_BASE = window.location.origin + '/api';
 
-// --- DEBUG UID (для локального тестирования без Telegram) ---
+// --- USER ID: берём из Telegram SDK или из URL параметра (для дебага) ---
+const TG_USER_ID = tg?.initDataUnsafe?.user?.id || '';
 const DEBUG_UID = new URLSearchParams(window.location.search).get('uid') || '';
+const USER_ID = TG_USER_ID || DEBUG_UID || '';
 
 // --- STATE ---
 let currentTab = 'home';
@@ -48,9 +57,13 @@ async function apiGet(endpoint) {
             headers['X-Telegram-Init-Data'] = tg.initData;
         }
         const sep = endpoint.includes('?') ? '&' : '?';
-        const url = DEBUG_UID ? `${API_BASE}${endpoint}${sep}uid=${DEBUG_UID}` : `${API_BASE}${endpoint}`;
+        const url = USER_ID ? `${API_BASE}${endpoint}${sep}uid=${USER_ID}` : `${API_BASE}${endpoint}`;
         const resp = await fetch(url, { headers });
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        if (!resp.ok) {
+            const errText = await resp.text();
+            console.error(`API GET ${endpoint}: HTTP ${resp.status}`, errText);
+            throw new Error(`HTTP ${resp.status}`);
+        }
         return await resp.json();
     } catch (e) {
         console.error(`API GET ${endpoint}:`, e);
@@ -65,13 +78,17 @@ async function apiPost(endpoint, body) {
             headers['X-Telegram-Init-Data'] = tg.initData;
         }
         const sep = endpoint.includes('?') ? '&' : '?';
-        const url = DEBUG_UID ? `${API_BASE}${endpoint}${sep}uid=${DEBUG_UID}` : `${API_BASE}${endpoint}`;
+        const url = USER_ID ? `${API_BASE}${endpoint}${sep}uid=${USER_ID}` : `${API_BASE}${endpoint}`;
         const resp = await fetch(url, {
             method: 'POST',
             headers,
             body: JSON.stringify(body),
         });
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        if (!resp.ok) {
+            const errText = await resp.text();
+            console.error(`API POST ${endpoint}: HTTP ${resp.status}`, errText);
+            throw new Error(`HTTP ${resp.status}`);
+        }
         return await resp.json();
     } catch (e) {
         console.error(`API POST ${endpoint}:`, e);
@@ -86,9 +103,13 @@ async function apiDelete(endpoint) {
             headers['X-Telegram-Init-Data'] = tg.initData;
         }
         const sep = endpoint.includes('?') ? '&' : '?';
-        const url = DEBUG_UID ? `${API_BASE}${endpoint}${sep}uid=${DEBUG_UID}` : `${API_BASE}${endpoint}`;
+        const url = USER_ID ? `${API_BASE}${endpoint}${sep}uid=${USER_ID}` : `${API_BASE}${endpoint}`;
         const resp = await fetch(url, { method: 'DELETE', headers });
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        if (!resp.ok) {
+            const errText = await resp.text();
+            console.error(`API DELETE ${endpoint}: HTTP ${resp.status}`, errText);
+            throw new Error(`HTTP ${resp.status}`);
+        }
         return await resp.json();
     } catch (e) {
         console.error(`API DELETE ${endpoint}:`, e);
@@ -110,6 +131,7 @@ async function loadAllData() {
     appData.quotes = quotes?.data || [];
     appData.memories = memories?.data || [];
     appData.relationship = relationship?.data || null;
+    appData.myUid = wishes?.my_uid || String(USER_ID);
 
     updateRelationshipCounter();
     renderCurrentTab();
@@ -319,11 +341,20 @@ function renderWishlist(container) {
 
     let html = `<div class="section-title">🎁 Виш-лист (${appData.wishes.length})</div>`;
     appData.wishes.forEach((wish, i) => {
+        const text = typeof wish === 'string' ? wish : wish.text;
+        const author = wish.author || '';
+        const ownerUid = wish.uid || appData.myUid;
+        // Считаем реальный индекс внутри данных этого пользователя
+        const sameOwner = appData.wishes.filter(w => (w.uid || appData.myUid) === ownerUid);
+        const realIdx = sameOwner.indexOf(wish);
         html += `
             <div class="list-item">
                 <div class="list-item-number">${i + 1}</div>
-                <div class="list-item-text">${escapeHtml(wish)}</div>
-                <button class="list-item-delete" onclick="deleteItem('wish', ${i})">🗑️</button>
+                <div class="list-item-text">
+                    ${escapeHtml(text)}
+                    <div style="font-size:11px;color:var(--text-secondary);margin-top:4px">— ${escapeHtml(author)}</div>
+                </div>
+                <button class="list-item-delete" onclick="deleteSharedItem('wish', ${realIdx}, '${ownerUid}')">🗑️</button>
             </div>
         `;
     });
@@ -349,11 +380,19 @@ function renderQuotes(container) {
 
     let html = `<div class="section-title">🤣 Цитаты (${appData.quotes.length})</div>`;
     appData.quotes.forEach((quote, i) => {
+        const text = typeof quote === 'string' ? quote : quote.text;
+        const author = quote.author || '';
+        const ownerUid = quote.uid || appData.myUid;
+        const sameOwner = appData.quotes.filter(q => (q.uid || appData.myUid) === ownerUid);
+        const realIdx = sameOwner.indexOf(quote);
         html += `
             <div class="list-item">
                 <div class="list-item-number">${i + 1}</div>
-                <div class="list-item-text">"${escapeHtml(quote)}"</div>
-                <button class="list-item-delete" onclick="deleteItem('quote', ${i})">🗑️</button>
+                <div class="list-item-text">
+                    "${escapeHtml(text)}"
+                    <div style="font-size:11px;color:var(--text-secondary);margin-top:4px">— добавил(а) ${escapeHtml(author)}</div>
+                </div>
+                <button class="list-item-delete" onclick="deleteSharedItem('quote', ${realIdx}, '${ownerUid}')">🗑️</button>
             </div>
         `;
     });
@@ -469,9 +508,7 @@ async function submitAdd(type) {
     document.querySelector('.modal-overlay')?.remove();
 
     if (result?.ok) {
-        if (type === 'wish') appData.wishes.push(text);
-        else appData.quotes.push(text);
-        renderCurrentTab();
+        await loadAllData();
         showToast(`✅ Добавлено!`);
     } else {
         showToast('❌ Ошибка');
@@ -522,7 +559,7 @@ async function submitMemory() {
         const headers = {};
         if (tg?.initData) headers['X-Telegram-Init-Data'] = tg.initData;
 
-        const memUrl = DEBUG_UID ? `${API_BASE}/memories?uid=${DEBUG_UID}` : `${API_BASE}/memories`;
+        const memUrl = USER_ID ? `${API_BASE}/memories?uid=${USER_ID}` : `${API_BASE}/memories`;
         const resp = await fetch(memUrl, {
             method: 'POST',
             headers,
@@ -556,10 +593,23 @@ async function deleteItem(type, index) {
     const result = await apiDelete(endpoint);
 
     if (result?.ok) {
-        if (type === 'wish') appData.wishes.splice(index, 1);
-        else if (type === 'quote') appData.quotes.splice(index, 1);
-        else appData.memories.splice(index, 1);
-        renderCurrentTab();
+        await loadAllData();
+        showToast('✅ Удалено');
+    } else {
+        showToast('❌ Ошибка');
+    }
+}
+
+async function deleteSharedItem(type, index, ownerUid) {
+    if (!confirm('Удалить?')) return;
+
+    const base = type === 'wish' ? 'wishes' : 'quotes';
+    const endpoint = `/${base}/${index}?owner=${ownerUid}`;
+
+    const result = await apiDelete(endpoint);
+
+    if (result?.ok) {
+        await loadAllData();
         showToast('✅ Удалено');
     } else {
         showToast('❌ Ошибка');
@@ -637,7 +687,6 @@ function showFactModal(text) {
 function openSecretMessage() {
     const users = [
         { id: 7118929376, name: 'Тёма', emoji: '👦' },
-        { id: 1428288113, name: 'Артём', emoji: '🧑' },
         { id: 8481047835, name: 'Майя', emoji: '👩' },
     ];
 

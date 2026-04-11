@@ -13,6 +13,10 @@ logging.basicConfig(level=logging.INFO)
 # Добавляем текущую директорию в путь
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+# Загружаем .env ДО импорта server.py (чтобы os.getenv работал)
+from dotenv import load_dotenv
+load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
+
 
 async def main():
     from aiohttp import web
