@@ -8,4 +8,4 @@ cmds = ["pip install -r requirements.txt"]
 cmd = "python3 run.py"
 
 [phases.build]
-cmds = ["echo 'Build v4.0.0 - Mini App'"]
+cmds = ["echo 'Build v4.1.1 - Mini App + Android fix'"]
