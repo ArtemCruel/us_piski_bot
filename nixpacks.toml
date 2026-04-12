@@ -1,11 +1,2 @@
-[phases.setup]
-nixPkgs = ["python313", "python313Packages.pip"]
-
-[phases.install]
-cmds = ["python3 -m pip install -r requirements.txt"]
-
 [start]
 cmd = "python3 run.py"
-
-[phases.build]
-cmds = ["echo 'Build v4.1.1 - Mini App + Android fix'"]
