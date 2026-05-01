@@ -6,16 +6,46 @@
 import asyncio
 import logging
 import os
+import shutil
 import sys
 
 logging.basicConfig(level=logging.INFO)
 
 # Добавляем текущую директорию в путь
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, BASE_DIR)
+
+
+def seed_data_volume():
+    """
+    Если DATA_DIR (Railway Volume /data) задан — копируем туда начальные
+    JSON-файлы из репозитория, только если их там ещё нет.
+    Это защищает данные: Volume переживает редеплои, а начальные значения
+    не перезатирают уже накопленные воспоминания/цитаты.
+    """
+    data_dir = os.getenv("DATA_DIR", "")
+    if not data_dir:
+        return  # локальный запуск — ничего не делаем
+
+    os.makedirs(data_dir, exist_ok=True)
+    json_files = ["memories.json", "quotes.json", "relationship.json", "wishlist.json"]
+
+    for fname in json_files:
+        dest = os.path.join(data_dir, fname)
+        src = os.path.join(BASE_DIR, fname)
+        if not os.path.exists(dest):
+            if os.path.exists(src):
+                shutil.copy2(src, dest)
+                logging.info(f"📦 Seeded {fname} → {data_dir}")
+            else:
+                logging.warning(f"⚠️  No seed file found for {fname}")
 
 # Загружаем .env ДО импорта server.py (чтобы os.getenv работал)
 from dotenv import load_dotenv
-load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
+load_dotenv(os.path.join(BASE_DIR, ".env"))
+
+# Сидируем Volume данными из репо при первом запуске
+seed_data_volume()
 
 
 async def main():
