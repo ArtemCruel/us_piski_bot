@@ -50,6 +50,7 @@ seed_data_volume()
 
 async def main():
     from aiohttp import web
+    from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
     from server import create_app
 
     # Импортируем бота
@@ -58,10 +59,48 @@ async def main():
     # Инициализация данных
     init_data_files()
 
-    logging.info(f"🚀 Starting Piska Bot v{BOT_VERSION} + Mini App...")
+    logging.info(f"🚀 Starting Piska Bot v{BOT_VERSION} + Mini App (webhook mode)...")
 
-    # Создаём веб-приложение
+    # Webhook URL — используем публичный домен Railway (или переменную)
+    public_domain = os.getenv("RAILWAY_PUBLIC_DOMAIN", "")
+    webhook_path = "/bot/webhook"
+
+    if public_domain:
+        webhook_url = f"https://{public_domain}{webhook_path}"
+    else:
+        # Локальный запуск — падаем обратно на polling
+        logging.info("⚠️  No RAILWAY_PUBLIC_DOMAIN — using polling mode (local)")
+        app = create_app()
+        port = int(os.getenv("PORT", "8080"))
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, "0.0.0.0", port)
+        await site.start()
+        logging.info(f"🌐 Web server running on port {port}")
+        try:
+            await dp.start_polling(bot)
+        finally:
+            await runner.cleanup()
+            await bot.session.close()
+        return
+
+    # Создаём веб-приложение и подключаем webhook handler
     app = create_app()
+    SimpleRequestHandler(dispatcher=dp, bot=bot).register(app, path=webhook_path)
+    setup_application(app, dp, bot=bot)
+
+    # Устанавливаем webhook при старте
+    async def on_startup(_app):
+        await bot.set_webhook(webhook_url, drop_pending_updates=True)
+        logging.info(f"✅ Webhook set: {webhook_url}")
+
+    # Удаляем webhook при остановке
+    async def on_shutdown(_app):
+        await bot.delete_webhook()
+        logging.info("🛑 Webhook deleted")
+
+    app.on_startup.append(on_startup)
+    app.on_shutdown.append(on_shutdown)
 
     # Запускаем веб-сервер
     port = int(os.getenv("PORT", "8080"))
@@ -69,14 +108,11 @@ async def main():
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
-    logging.info(f"🌐 Web server running on port {port}")
+    logging.info(f"🌐 Web server + Webhook running on port {port}")
 
-    # Запускаем бота
-    logging.info("🤖 Starting Telegram bot polling...")
+    # Ждём вечно (webhook сам обрабатывает обновления)
     try:
-        await dp.start_polling(bot)
-    except Exception as e:
-        logging.error(f"❌ Bot crashed: {e}")
+        await asyncio.Event().wait()
     finally:
         await runner.cleanup()
         await bot.session.close()
