@@ -478,6 +478,36 @@ async def api_secret(request):
         return web.json_response({"error": str(e)}, status=500)
 
 
+async def api_admin_import_memories(request):
+    """Защищённый эндпоинт для массового импорта воспоминаний. Используется один раз для восстановления."""
+    secret = request.headers.get("X-Admin-Secret", "")
+    if secret != "piski-restore-2026":
+        return web.json_response({"error": "forbidden"}, status=403)
+    body = await request.json()
+    entries = body.get("memories", [])
+    if not entries:
+        return web.json_response({"error": "no memories"}, status=400)
+
+    data = get_data("memories")
+    if "memories" not in data:
+        data["memories"] = []
+
+    # Добавляем только те у которых нет дублирующего file_id
+    existing_ids = {m.get("file_id") for m in data["memories"] if m.get("file_id")}
+    added = 0
+    for entry in entries:
+        if entry.get("file_id") and entry["file_id"] in existing_ids:
+            continue
+        data["memories"].append(entry)
+        if entry.get("file_id"):
+            existing_ids.add(entry["file_id"])
+        added += 1
+
+    save_data("memories", data)
+    logging.info(f"📥 Admin import: added {added} memories, total now {len(data['memories'])}")
+    return web.json_response({"ok": True, "added": added, "total": len(data["memories"])})
+
+
 # --- FILE PROXY (для отображения фото из Telegram) ---
 async def api_get_file(request):
     """Проксирует файлы из Telegram. Не требует auth (URL не угадать)."""
@@ -559,6 +589,8 @@ def create_app():
     app.router.add_post('/api/secret', api_secret)
 
     app.router.add_get('/api/file/{file_id}', api_get_file)
+
+    app.router.add_post('/api/admin/import-memories', api_admin_import_memories)
 
     # Static files (webapp)
     app.router.add_static('/static/', WEBAPP_DIR, show_index=False)
